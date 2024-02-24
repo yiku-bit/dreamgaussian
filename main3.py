@@ -179,7 +179,11 @@ class GUI:
             if self.enable_zero123:
                 self.guidance_zero123.get_img_embeds(self.input_img_torch)
 
-
+        # load pre-trained gaussian
+        self.renderer.gaussians.load_ply(os.path.join(self.model_path,
+                                                "point_cloud",
+                                                "iteration_" + str(self.loaded_iter),
+                                                "point_cloud.ply"))
 
     def train_step(self):
         starter = torch.cuda.Event(enable_timing=True)

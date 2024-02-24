@@ -170,6 +170,7 @@ class StableDiffusion(nn.Module):
             # predict the noise residual with unet, NO grad!
             # add noise
             noise = torch.randn_like(latents)
+            # noise = edit_latent
             latents_noisy = self.scheduler.add_noise(latents, noise, t)
             # pred noise
             latent_model_input = torch.cat([latents_noisy] * 2)
