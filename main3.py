@@ -249,7 +249,8 @@ class GUI:
             for i in range(self.opt.batch_size):
                 latent_after_editing = drag(latents_before_editing[i])
                 latents_after_editing.append(latent_after_editing)
-                loss = loss + self.opt.lambda_sd * self.guidance_sd.draggs_train_step(images, step_ratio=step_ratio if self.opt.anneal_timestep else None)
+                # *** loss calculation: add latent after editing
+                loss = loss + self.opt.lambda_sd * self.guidance_sd.draggs_train_step(latents_after_editing, images, step_ratio=step_ratio if self.opt.anneal_timestep else None)
 
             loss.backward()
             self.optimizer.step()
