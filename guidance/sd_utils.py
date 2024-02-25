@@ -137,14 +137,14 @@ class StableDiffusion(nn.Module):
 
     def draggs_train_step(
             self, 
-            latents, 
+            latent_after_drag, 
             pred_rgb,step_ratio=None,
             guidance_scale=100,
             as_latent=False,
             vers=None, hors=None, 
     ):
         
-        batch_size = pred_rgb.shape[0]
+        batch_size = 1
         pred_rgb = pred_rgb.to(self.dtype)
 
         if as_latent:
@@ -169,8 +169,8 @@ class StableDiffusion(nn.Module):
 
             # predict the noise residual with unet, NO grad!
             # add noise
-            noise = torch.randn_like(latents)
-            # noise = edit_latent
+            # noise = torch.randn_like(latents)
+            noise = latent_after_drag
             latents_noisy = self.scheduler.add_noise(latents, noise, t)
             # pred noise
             latent_model_input = torch.cat([latents_noisy] * 2)
@@ -207,77 +207,6 @@ class StableDiffusion(nn.Module):
 
         return loss
 
-    def train_step(
-        self,
-        pred_rgb,
-        step_ratio=None,
-        guidance_scale=100,
-        as_latent=False,
-        vers=None, hors=None,
-    ):
-        
-        batch_size = pred_rgb.shape[0]
-        pred_rgb = pred_rgb.to(self.dtype)
-
-        if as_latent:
-            latents = F.interpolate(pred_rgb, (64, 64), mode="bilinear", align_corners=False) * 2 - 1
-        else:
-            # interp to 512x512 to be fed into vae.
-            pred_rgb_512 = F.interpolate(pred_rgb, (512, 512), mode="bilinear", align_corners=False)
-            # encode image into latents with vae, requires grad!
-            latents = self.encode_imgs(pred_rgb_512)
-
-        with torch.no_grad():
-            if step_ratio is not None:
-                # dreamtime-like
-                # t = self.max_step - (self.max_step - self.min_step) * np.sqrt(step_ratio)
-                t = np.round((1 - step_ratio) * self.num_train_timesteps).clip(self.min_step, self.max_step)
-                t = torch.full((batch_size,), t, dtype=torch.long, device=self.device)
-            else:
-                t = torch.randint(self.min_step, self.max_step + 1, (batch_size,), dtype=torch.long, device=self.device)
-
-            # w(t), sigma_t^2
-            w = (1 - self.alphas[t]).view(batch_size, 1, 1, 1)
-
-            # predict the noise residual with unet, NO grad!
-            # add noise
-            noise = torch.randn_like(latents)
-            # noise = edit_latent
-            latents_noisy = self.scheduler.add_noise(latents, noise, t)
-            # pred noise
-            latent_model_input = torch.cat([latents_noisy] * 2)
-            tt = torch.cat([t] * 2)
-
-            if hors is None:
-                embeddings = torch.cat([self.embeddings['pos'].expand(batch_size, -1, -1), self.embeddings['neg'].expand(batch_size, -1, -1)])
-            else:
-                def _get_dir_ind(h):
-                    if abs(h) < 60: return 'front'
-                    elif abs(h) < 120: return 'side'
-                    else: return 'back'
-
-                embeddings = torch.cat([self.embeddings[_get_dir_ind(h)] for h in hors] + [self.embeddings['neg'].expand(batch_size, -1, -1)])
-
-            noise_pred = self.unet(
-                latent_model_input, tt, encoder_hidden_states=embeddings
-            ).sample
-
-            # perform guidance (high scale from paper!)
-            noise_pred_cond, noise_pred_uncond = noise_pred.chunk(2)
-            noise_pred = noise_pred_uncond + guidance_scale * (
-                noise_pred_cond - noise_pred_uncond
-            )
-
-            grad = w * (noise_pred - noise)
-            grad = torch.nan_to_num(grad)
-
-            # seems important to avoid NaN...
-            # grad = grad.clamp(-1, 1)
-
-        target = (latents - grad).detach()
-        loss = 0.5 * F.mse_loss(latents.float(), target, reduction='sum') / latents.shape[0]
-
-        return loss
 
     @torch.no_grad()
     def produce_latents(

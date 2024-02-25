@@ -230,23 +230,23 @@ class GUI:
                 latent_after_editing = drag(latents_before_editing[i])
                 latents_after_editing.append(latent_after_editing)
                 # *** loss calculation: add latent after editing
-                loss = loss + self.opt.lambda_sd * self.guidance_sd.draggs_train_step(latents_after_editing, images, step_ratio=step_ratio if self.opt.anneal_timestep else None)
+                loss = loss + self.opt.lambda_sd * self.guidance_sd.draggs_train_step(latent_after_editing, image[i], step_ratio=step_ratio if self.opt.anneal_timestep else None)
 
             loss.backward()
             self.optimizer.step()
             self.optimizer.zero_grad()
 
-            # densify and prune
-            if self.step >= self.opt.density_start_iter and self.step <= self.opt.density_end_iter:
-                viewspace_point_tensor, visibility_filter, radii = out["viewspace_points"], out["visibility_filter"], out["radii"]
-                self.renderer.gaussians.max_radii2D[visibility_filter] = torch.max(self.renderer.gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
-                self.renderer.gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
+        # densify and prune
+        if self.step >= self.opt.density_start_iter and self.step <= self.opt.density_end_iter:
+            viewspace_point_tensor, visibility_filter, radii = out["viewspace_points"], out["visibility_filter"], out["radii"]
+            self.renderer.gaussians.max_radii2D[visibility_filter] = torch.max(self.renderer.gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
+            self.renderer.gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
 
-                if self.step % self.opt.densification_interval == 0:
-                    self.renderer.gaussians.densify_and_prune(self.opt.densify_grad_threshold, min_opacity=0.01, extent=4, max_screen_size=1)
-                
-                if self.step % self.opt.opacity_reset_interval == 0:
-                    self.renderer.gaussians.reset_opacity()
+            if self.step % self.opt.densification_interval == 0:
+                self.renderer.gaussians.densify_and_prune(self.opt.densify_grad_threshold, min_opacity=0.01, extent=4, max_screen_size=1)
+            
+            if self.step % self.opt.opacity_reset_interval == 0:
+                self.renderer.gaussians.reset_opacity()
 
         ender.record()
         torch.cuda.synchronize()
