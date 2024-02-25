@@ -72,12 +72,17 @@ class GUI:
         if self.opt.negative_prompt is not None:
             self.negative_prompt = self.opt.negative_prompt
 
-        # override if provide a checkpoint
+        # # override if provide a checkpoint
+        # if self.opt.load is not None:
+        #     self.renderer.initialize(self.opt.load)            
+        # else:
+        #     # initialize gaussians to a blob
+        #     self.renderer.initialize(num_pts=self.opt.num_pts)
+            
         if self.opt.load is not None:
-            self.renderer.initialize(self.opt.load)            
+            self.renderer.initialize(self.opt.load)
         else:
-            # initialize gaussians to a blob
-            self.renderer.initialize(num_pts=self.opt.num_pts)
+            print("Please load pre-trained gaussian.")
 
         if self.gui:
             dpg.create_context()
@@ -150,22 +155,22 @@ class GUI:
                 self.guidance_sd = StableDiffusion(self.device)
                 print(f"[INFO] loaded SD!")
 
-        if self.guidance_zero123 is None and self.enable_zero123:
-            print(f"[INFO] loading zero123...")
-            from guidance.zero123_utils import Zero123
-            if self.opt.stable_zero123:
-                self.guidance_zero123 = Zero123(self.device, model_key='ashawkey/stable-zero123-diffusers')
-            else:
-                self.guidance_zero123 = Zero123(self.device, model_key='ashawkey/zero123-xl-diffusers')
-            print(f"[INFO] loaded zero123!")
+        # if self.guidance_zero123 is None and self.enable_zero123:
+        #     print(f"[INFO] loading zero123...")
+        #     from guidance.zero123_utils import Zero123
+        #     if self.opt.stable_zero123:
+        #         self.guidance_zero123 = Zero123(self.device, model_key='ashawkey/stable-zero123-diffusers')
+        #     else:
+        #         self.guidance_zero123 = Zero123(self.device, model_key='ashawkey/zero123-xl-diffusers')
+        #     print(f"[INFO] loaded zero123!")
 
         # input image (for image to 3D tasks)
-        if self.input_img is not None:
-            self.input_img_torch = torch.from_numpy(self.input_img).permute(2, 0, 1).unsqueeze(0).to(self.device)
-            self.input_img_torch = F.interpolate(self.input_img_torch, (self.opt.ref_size, self.opt.ref_size), mode="bilinear", align_corners=False)
+        # if self.input_img is not None:
+        #     self.input_img_torch = torch.from_numpy(self.input_img).permute(2, 0, 1).unsqueeze(0).to(self.device)
+        #     self.input_img_torch = F.interpolate(self.input_img_torch, (self.opt.ref_size, self.opt.ref_size), mode="bilinear", align_corners=False)
 
-            self.input_mask_torch = torch.from_numpy(self.input_mask).permute(2, 0, 1).unsqueeze(0).to(self.device)
-            self.input_mask_torch = F.interpolate(self.input_mask_torch, (self.opt.ref_size, self.opt.ref_size), mode="bilinear", align_corners=False)
+        #     self.input_mask_torch = torch.from_numpy(self.input_mask).permute(2, 0, 1).unsqueeze(0).to(self.device)
+        #     self.input_mask_torch = F.interpolate(self.input_mask_torch, (self.opt.ref_size, self.opt.ref_size), mode="bilinear", align_corners=False)
 
         # prepare embeddings
         with torch.no_grad():
@@ -179,104 +184,73 @@ class GUI:
             if self.enable_zero123:
                 self.guidance_zero123.get_img_embeds(self.input_img_torch)
 
-        # load pre-trained gaussian
-        self.renderer.gaussians.load_ply(os.path.join(self.model_path,
-                                                "point_cloud",
-                                                "iteration_" + str(self.loaded_iter),
-                                                "point_cloud.ply"))
 
     def train_step(self):
         starter = torch.cuda.Event(enable_timing=True)
         ender = torch.cuda.Event(enable_timing=True)
         starter.record()
 
-        for _ in range(self.train_steps):
+        # per-iteration training
+        # sample 4 random camera poses
+        self.step += 1
+        step_ratio = min(1, self.step / self.opt.iters)
 
-            self.step += 1
-            step_ratio = min(1, self.step / self.opt.iters)
+        # update lr
+        self.renderer.gaussians.update_learning_rate(self.step)
+        
+        render_resolution = 128 if step_ratio < 0.3 else (256 if step_ratio < 0.6 else 512)
+        images = []
+        poses = []  
+        vers, hors, radii = [], [], []
+        latents_before_editing = []
+        # avoid too large elevation (> 80 or < -80), and make sure it always cover [min_ver, max_ver]
+        min_ver = max(min(self.opt.min_ver, self.opt.min_ver - self.opt.elevation), -80 - self.opt.elevation)
+        max_ver = min(max(self.opt.max_ver, self.opt.max_ver - self.opt.elevation), 80 - self.opt.elevation)
 
-            # update lr
-            self.renderer.gaussians.update_learning_rate(self.step)
+        start_hor = -180
+
+        for _ in range(self.opt.batch_size):
+            # set batch_size = 4
+
+            # render i/4 view
+            ver = 0
+            hor = start_hor + 90 # -90, 0, 90, 180
+            start_hor += 90
+            radius = 0
+
+            vers.append(ver)
+            hors.append(hor)
+            radii.append(radius)
+            
+            pose = orbit_camera(self.opt.elevation + ver, hor, self.opt.radius + radius)
+            poses.append(pose)
+
+            cur_cam = MiniCam(pose, render_resolution, render_resolution, self.cam.fovy, self.cam.fovx, self.cam.near, self.cam.far)
+
+            bg_color = torch.tensor([1, 1, 1] if np.random.rand() > self.opt.invert_bg_prob else [0, 0, 0], dtype=torch.float32, device="cuda")
+            out = self.renderer.render(cur_cam, bg_color=bg_color)
+
+            image = out["image"].unsqueeze(0) # [1, 3, H, W] in [0, 1] normalized
+            images.append(image)
+            
+            latent_before_editing = DDIM_inversion(source_images=image,
+                                                text_embeddings=self.guidance_sd.get_text_embeds)
+            latents_before_editing.append(latent_before_editing)
+
+        images = torch.cat(images, dim = 0)
+        poses = torch.from_numpy(np.stack(poses, axis=0)).to(self.device)        
+
+        for _ in range(self.dragging_steps):
+            latents_after_editing = []
 
             loss = 0
 
-            ### known view
-            if self.input_img_torch is not None and not self.opt.imagedream:
-                cur_cam = self.fixed_cam
-                out = self.renderer.render(cur_cam)
+            # one step motion supervision & point tracking
+            for i in range(self.opt.batch_size):
+                latent_after_editing = drag(latents_before_editing[i])
+                latents_after_editing.append(latent_after_editing)
+                loss = loss + self.opt.lambda_sd * self.guidance_sd.draggs_train_step(images, step_ratio=step_ratio if self.opt.anneal_timestep else None)
 
-                # rgb loss
-                image = out["image"].unsqueeze(0) # [1, 3, H, W] in [0, 1]
-                loss = loss + 10000 * (step_ratio if self.opt.warmup_rgb_loss else 1) * F.mse_loss(image, self.input_img_torch)
-
-                # mask loss
-                mask = out["alpha"].unsqueeze(0) # [1, 1, H, W] in [0, 1]
-                loss = loss + 1000 * (step_ratio if self.opt.warmup_rgb_loss else 1) * F.mse_loss(mask, self.input_mask_torch)
-
-            ### novel view (manual batch)
-            render_resolution = 128 if step_ratio < 0.3 else (256 if step_ratio < 0.6 else 512)
-            images = []
-            poses = []
-            vers, hors, radii = [], [], []
-            # avoid too large elevation (> 80 or < -80), and make sure it always cover [min_ver, max_ver]
-            min_ver = max(min(self.opt.min_ver, self.opt.min_ver - self.opt.elevation), -80 - self.opt.elevation)
-            max_ver = min(max(self.opt.max_ver, self.opt.max_ver - self.opt.elevation), 80 - self.opt.elevation)
-
-            for _ in range(self.opt.batch_size):
-
-                # render random view
-                ver = np.random.randint(min_ver, max_ver)
-                hor = np.random.randint(-180, 180)
-                radius = 0
-
-                vers.append(ver)
-                hors.append(hor)
-                radii.append(radius)
-
-                pose = orbit_camera(self.opt.elevation + ver, hor, self.opt.radius + radius)
-                poses.append(pose)
-
-                cur_cam = MiniCam(pose, render_resolution, render_resolution, self.cam.fovy, self.cam.fovx, self.cam.near, self.cam.far)
-
-                bg_color = torch.tensor([1, 1, 1] if np.random.rand() > self.opt.invert_bg_prob else [0, 0, 0], dtype=torch.float32, device="cuda")
-                out = self.renderer.render(cur_cam, bg_color=bg_color)
-
-                image = out["image"].unsqueeze(0) # [1, 3, H, W] in [0, 1]
-                images.append(image)
-
-                # enable mvdream training
-                if self.opt.mvdream or self.opt.imagedream:
-                    for view_i in range(1, 4):
-                        pose_i = orbit_camera(self.opt.elevation + ver, hor + 90 * view_i, self.opt.radius + radius)
-                        poses.append(pose_i)
-
-                        cur_cam_i = MiniCam(pose_i, render_resolution, render_resolution, self.cam.fovy, self.cam.fovx, self.cam.near, self.cam.far)
-
-                        # bg_color = torch.tensor([0.5, 0.5, 0.5], dtype=torch.float32, device="cuda")
-                        out_i = self.renderer.render(cur_cam_i, bg_color=bg_color)
-
-                        image = out_i["image"].unsqueeze(0) # [1, 3, H, W] in [0, 1]
-                        images.append(image)
-                    
-            images = torch.cat(images, dim=0)
-            poses = torch.from_numpy(np.stack(poses, axis=0)).to(self.device)
-
-            # import kiui
-            # print(hor, ver)
-            # kiui.vis.plot_image(images)
-
-            # guidance loss
-            if self.enable_sd:
-                if self.opt.mvdream or self.opt.imagedream:
-                    # loss = loss + self.opt.lambda_sd * self.guidance_sd.train_step(images, poses, step_ratio=step_ratio if self.opt.anneal_timestep else None)
-                    loss = loss + self.opt.lambda_sd * self.guidance_sd.train_step(edit_latent, images, poses, step_ratio=step_ratio if self.opt.anneal_timestep else None)
-                else:
-                    loss = loss + self.opt.lambda_sd * self.guidance_sd.train_step(images, step_ratio=step_ratio if self.opt.anneal_timestep else None)
-
-            if self.enable_zero123:
-                loss = loss + self.opt.lambda_zero123 * self.guidance_zero123.train_step(images, vers, hors, radii, step_ratio=step_ratio if self.opt.anneal_timestep else None, default_elevation=self.opt.elevation)
-            
-            # optimize step
             loss.backward()
             self.optimizer.step()
             self.optimizer.zero_grad()
@@ -295,24 +269,10 @@ class GUI:
 
         ender.record()
         torch.cuda.synchronize()
-        t = starter.elapsed_time(ender)
+        t = starter.elapsed_time(ender)   
 
-        self.need_update = True
-
-        if self.gui:
-            dpg.set_value("_log_train_time", f"{t:.4f}ms")
-            dpg.set_value(
-                "_log_train_log",
-                f"step = {self.step: 5d} (+{self.train_steps: 2d}) loss = {loss.item():.4f}",
-            )
-
-        # dynamic train steps (no need for now)
-        # max allowed train time per-frame is 500 ms
-        # full_t = t / self.train_steps * 16
-        # train_steps = min(16, max(4, int(16 * 500 / full_t)))
-        # if train_steps > self.train_steps * 1.2 or train_steps < self.train_steps * 0.8:
-        #     self.train_steps = train_steps
-
+        self.need_update = True     
+        
     @torch.no_grad()
     def test_step(self):
         # ignore if no need to update
