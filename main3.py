@@ -182,6 +182,7 @@ class GUI:
         images = []
         poses = []  
         vers, hors, radii = [], [], []
+        start_points, end_points = [], []
         latents_before_editing = []
         # avoid too large elevation (> 80 or < -80), and make sure it always cover [min_ver, max_ver]
         min_ver = max(min(self.opt.min_ver, self.opt.min_ver - self.opt.elevation), -80 - self.opt.elevation)
@@ -209,10 +210,14 @@ class GUI:
 
             bg_color = torch.tensor([1, 1, 1] if np.random.rand() > self.opt.invert_bg_prob else [0, 0, 0], dtype=torch.float32, device="cuda")
             out = self.renderer.render(cur_cam, bg_color=bg_color)
+            # load start & end points
 
             image = out["image"].unsqueeze(0) # [1, 3, H, W] in [0, 1] normalized
             images.append(image)
+
+            # ***images visualize
             
+            print("Start DDIM inversion...")
             latent_before_editing = DDIM_inversion(source_images=image,
                                                 text_embeddings=self.guidance_sd.get_text_embeds)
             latents_before_editing.append(latent_before_editing)
@@ -227,7 +232,9 @@ class GUI:
 
             # one step motion supervision & point tracking
             for i in range(self.opt.batch_size):
-                latent_after_editing = drag(latents_before_editing[i])
+                latent_after_editing = drag(latents_before_editing[i],
+                                            start_points,
+                                            end_points)
                 latents_after_editing.append(latent_after_editing)
                 # *** loss calculation: add latent after editing
                 loss = loss + self.opt.lambda_sd * self.guidance_sd.draggs_train_step(latent_after_editing, image[i], step_ratio=step_ratio if self.opt.anneal_timestep else None)
