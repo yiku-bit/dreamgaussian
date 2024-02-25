@@ -61,6 +61,7 @@ class GUI:
         self.optimizer = None
         self.step = 0
         self.train_steps = 1  # steps per rendering loop
+        self.dragging_steps = 50
         
         # load input data from cmdline
         if self.opt.input is not None:
