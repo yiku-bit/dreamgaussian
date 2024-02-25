@@ -135,7 +135,15 @@ class StableDiffusion(nn.Module):
         imgs = self.decode_latents(latents) # [1, 3, 512, 512]
         return imgs
 
-    def draggs_train_step():
+    def draggs_train_step(
+            self, 
+            latents, 
+            pred_rgb,step_ratio=None,
+            guidance_scale=100,
+            as_latent=False,
+            vers=None, hors=None, 
+    ):
+        
         batch_size = pred_rgb.shape[0]
         pred_rgb = pred_rgb.to(self.dtype)
 

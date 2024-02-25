@@ -32,7 +32,7 @@ lambda_zero123: 0
 warmup_rgb_loss: True
 # training batch size per iter
 # batch_size: 1
-batch_size: 4
+batch_size: 1
 # training iterations for stage 1
 iters: 500
 # whether to linearly anneal timestep

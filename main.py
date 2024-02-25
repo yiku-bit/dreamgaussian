@@ -900,7 +900,7 @@ class GUI:
             self.renderer.gaussians.prune(min_opacity=0.01, extent=1, max_screen_size=1)
         # save
         self.save_model(mode='model')
-        self.save_model(mode='geo+tex')
+        # self.save_model(mode='geo+tex')
         
 
 if __name__ == "__main__":
