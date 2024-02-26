@@ -16,6 +16,10 @@ from gs_renderer import Renderer, MiniCam
 from grid_put import mipmap_linear_grid_put_2d
 from mesh import Mesh, safe_normalize
 
+import sys
+import matplotlib.pyplot as plt
+from PIL import Image
+
 class GUI:
     def __init__(self, opt):
         self.opt = opt  # shared with the trainer's opt to support in-place modification of rendering parameters.
@@ -73,12 +77,11 @@ class GUI:
         if self.opt.negative_prompt is not None:
             self.negative_prompt = self.opt.negative_prompt
 
-
         # load pre-trained gaussian
         if self.opt.load is not None:
             self.renderer.initialize(self.opt.load)
         else:
-            print("Please load pre-trained gaussian.")
+            print("Warning: please load pre-trained gaussian.")
 
         if self.gui:
             dpg.create_context()
@@ -190,12 +193,13 @@ class GUI:
 
         start_hor = -180
 
-        for _ in range(self.opt.batch_size):
+        for i in range(self.opt.batch_size):
             # set batch_size = 4
 
             # render i/4 view
             ver = 0
-            hor = start_hor + 90 # -90, 0, 90, 180
+            hor = start_hor # -180, -90, 0, 90
+            # hor = np.random.randint(-180, 180)
             start_hor += 90
             radius = 0
 
@@ -207,8 +211,8 @@ class GUI:
             poses.append(pose)
 
             cur_cam = MiniCam(pose, render_resolution, render_resolution, self.cam.fovy, self.cam.fovx, self.cam.near, self.cam.far)
-
-            bg_color = torch.tensor([1, 1, 1] if np.random.rand() > self.opt.invert_bg_prob else [0, 0, 0], dtype=torch.float32, device="cuda")
+            # bg_color = torch.tensor([1, 1, 1] if np.random.rand() > self.opt.invert_bg_prob else [0, 0, 0], dtype=torch.float32, device="cuda")
+            bg_color = torch.tensor([0, 0, 0],  dtype=torch.float32, device="cuda")
             out = self.renderer.render(cur_cam, bg_color=bg_color)
             # load start & end points
 
@@ -216,12 +220,17 @@ class GUI:
             images.append(image)
 
             # ***images visualize
+            image_np = image.squeeze(0).permute(1, 2, 0).cpu().detach().numpy()
+            image_np = (image_np * 255).astype('uint8')
+            image_pil = Image.fromarray(image_np)
+            image_pil.save(f"rendered_images/visualized_image_pil_{i}.png")
             
-            print("Start DDIM inversion...")
-            latent_before_editing = DDIM_inversion(source_images=image,
-                                                text_embeddings=self.guidance_sd.get_text_embeds)
-            latents_before_editing.append(latent_before_editing)
+            # print("Start DDIM inversion...")
+            # latent_before_editing = DDIM_inversion(source_images=image,
+            #                                     text_embeddings=self.guidance_sd.get_text_embeds)
+            # latents_before_editing.append(latent_before_editing)
 
+        sys.exit()
         images = torch.cat(images, dim = 0)
         poses = torch.from_numpy(np.stack(poses, axis=0)).to(self.device)        
 

@@ -234,8 +234,9 @@ class GUI:
                 pose = orbit_camera(self.opt.elevation + ver, hor, self.opt.radius + radius)
                 poses.append(pose)
 
+                # print(cur_cam.shape)
                 cur_cam = MiniCam(pose, render_resolution, render_resolution, self.cam.fovy, self.cam.fovx, self.cam.near, self.cam.far)
-
+                
                 bg_color = torch.tensor([1, 1, 1] if np.random.rand() > self.opt.invert_bg_prob else [0, 0, 0], dtype=torch.float32, device="cuda")
                 out = self.renderer.render(cur_cam, bg_color=bg_color)
 
@@ -900,7 +901,7 @@ class GUI:
             self.renderer.gaussians.prune(min_opacity=0.01, extent=1, max_screen_size=1)
         # save
         self.save_model(mode='model')
-        # self.save_model(mode='geo+tex')
+        # self.save_model(mode='geo+tex') 
         
 
 if __name__ == "__main__":
