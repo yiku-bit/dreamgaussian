@@ -9,7 +9,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
+from tqdm import tqdm
 
 def seed_everything(seed):
     torch.manual_seed(seed)
@@ -303,6 +303,102 @@ class StableDiffusion(nn.Module):
         imgs = (imgs * 255).round().astype("uint8")
 
         return imgs
+    
+    def inv_step(
+        self,
+        model_output: torch.FloatTensor,
+        timestep: int,
+        x: torch.FloatTensor,
+        eta=0.,
+        verbose=False
+    ):
+        """
+        Inverse sampling for DDIM Inversion
+        """
+        if verbose:
+            print("timestep: ", timestep)
+        next_step = timestep
+        timestep = min(timestep - self.scheduler.config.num_train_timesteps // self.scheduler.num_inference_steps, 999)
+        alpha_prod_t = self.scheduler.alphas_cumprod[timestep] if timestep >= 0 else self.scheduler.final_alpha_cumprod
+        alpha_prod_t_next = self.scheduler.alphas_cumprod[next_step]
+        beta_prod_t = 1 - alpha_prod_t
+        pred_x0 = (x - beta_prod_t**0.5 * model_output) / alpha_prod_t**0.5
+        pred_dir = (1 - alpha_prod_t_next)**0.5 * model_output
+        x_next = alpha_prod_t_next**0.5 * pred_x0 + pred_dir
+        return x_next, pred_x0
+    
+    @torch.no_grad()
+    def invert(
+        self,
+        image: torch.Tensor,
+        prompt,
+        text_embeddings=None,
+        num_inference_steps=50,
+        num_actual_inference_steps=None,
+        guidance_scale=7.5,
+        eta=0.0,
+        return_intermediates=False,
+        **kwds):
+        """
+        invert a real image into noise map with determinisc DDIM inversion
+        """
+        DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+        batch_size = image.shape[0]
+        if text_embeddings is None:
+            if isinstance(prompt, list):
+                if batch_size == 1:
+                    image = image.expand(len(prompt), -1, -1, -1)
+            elif isinstance(prompt, str):
+                if batch_size > 1:
+                    prompt = [prompt] * batch_size
+            text_embeddings = self.get_text_embeddings(prompt)
+
+        # define initial latents
+        latents = self.image2latent(image)
+
+        # unconditional embedding for classifier free guidance
+        if guidance_scale > 1.:
+            # max_length = text_input.input_ids.shape[-1]
+            unconditional_input = self.tokenizer(
+                [""] * batch_size,
+                padding="max_length",
+                max_length=77,
+                return_tensors="pt"
+            )
+            unconditional_embeddings = self.text_encoder(unconditional_input.input_ids.to(DEVICE))[0]
+            text_embeddings = torch.cat([unconditional_embeddings, text_embeddings], dim=0)
+
+        print("latents shape: ", latents.shape)
+        # interative sampling
+        self.scheduler.set_timesteps(num_inference_steps)
+        print("Valid timesteps: ", reversed(self.scheduler.timesteps))
+        # print("attributes: ", self.scheduler.__dict__)
+        latents_list = [latents]
+        pred_x0_list = [latents]
+        for i, t in enumerate(tqdm(reversed(self.scheduler.timesteps), desc="DDIM Inversion")):
+            if num_actual_inference_steps is not None and i >= num_actual_inference_steps:
+                continue
+
+            if guidance_scale > 1.:
+                model_inputs = torch.cat([latents] * 2)
+            else:
+                model_inputs = latents
+
+            # predict the noise
+            noise_pred = self.unet(model_inputs, t, encoder_hidden_states=text_embeddings)
+            if guidance_scale > 1.:
+                noise_pred_uncon, noise_pred_con = noise_pred.chunk(2, dim=0)
+                noise_pred = noise_pred_uncon + guidance_scale * (noise_pred_con - noise_pred_uncon)
+            # compute the previous noise sample x_t-1 -> x_t
+            latents, pred_x0 = self.inv_step(noise_pred, t, latents)
+            latents_list.append(latents)
+            pred_x0_list.append(pred_x0)
+
+        if return_intermediates:
+            # return the intermediate laters during inversion
+            # pred_x0_list = [self.latent2image(img, return_type="pt") for img in pred_x0_list]
+            return latents, latents_list
+        return latents
 
 
 if __name__ == "__main__":
@@ -346,3 +442,5 @@ if __name__ == "__main__":
     # visualize image
     plt.imshow(imgs[0])
     plt.show()
+
+
