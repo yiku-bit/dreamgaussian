@@ -19,6 +19,13 @@ from mesh import Mesh, safe_normalize
 import sys
 import matplotlib.pyplot as plt
 from PIL import Image
+from diffusers import StableDiffusionPipeline, DDIMScheduler
+from guidance.sd_utils import StableDiffusion
+
+from drag import drag_step
+import copy
+import json
+from einops import rearrange
 
 class GUI:
     def __init__(self, opt):
@@ -150,7 +157,6 @@ class GUI:
                 print(f"[INFO] loaded ImageDream!")
             else:
                 print(f"[INFO] loading SD...")
-                from guidance.sd_utils import StableDiffusion
                 self.guidance_sd = StableDiffusion(self.device)
                 print(f"[INFO] loaded SD!")
 
@@ -167,6 +173,37 @@ class GUI:
             if self.enable_zero123:
                 self.guidance_zero123.get_img_embeds(self.input_img_torch)
 
+    def get_2d_mask(self, mask_dir):
+        source_images, imgname2idx = load_and_preprocess_images(args.folder_path, device="cuda")
+        if mask_dir is not None:
+            idx2name = dict(zip(imgname2idx.values(), imgname2idx.keys()))
+            with open(mask_dir) as f:
+                masks_dict = json.load(f)
+            masks = []
+            for i in range(1, 5):
+                print(idx2name)
+                mask = masks_dict[idx2name[i]+'.png']
+                masks.append(mask)
+                # Visualization
+                plt.figure(figsize=(6, 6))
+                plt.imshow(1 - np.array(mask), cmap='gray')
+                plt.colorbar()
+                plt.title("Visualization of the 2D Mask")
+                plt.axis('off')  # Hide the axis
+
+                # Save the visualization result
+                file_path = "mask_visualization_{}.png".format(i)
+                plt.savefig(file_path)
+                
+                
+            mask = 1 - torch.tensor(masks)
+            # print(mask)
+            mask = rearrange(mask, "n h w -> n 1 h w").float().cuda()
+        else:
+            mask = torch.ones_like(source_images[0, 0, :, :])
+            mask = rearrange(mask, "h w -> 1 1 h w").cuda()
+
+        return mask
 
     def train_step(self):
         starter = torch.cuda.Event(enable_timing=True)
@@ -187,11 +224,20 @@ class GUI:
         vers, hors, radii = [], [], []
         start_points, end_points = [], []
         latents_before_editing = []
+        masks = []
         # avoid too large elevation (> 80 or < -80), and make sure it always cover [min_ver, max_ver]
         min_ver = max(min(self.opt.min_ver, self.opt.min_ver - self.opt.elevation), -80 - self.opt.elevation)
         max_ver = min(max(self.opt.max_ver, self.opt.max_ver - self.opt.elevation), 80 - self.opt.elevation)
 
         start_hor = -180
+
+        # initialize model
+        # device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+        # scheduler = DDIMScheduler(beta_start=0.00085, beta_end=0.012,
+        #                   beta_schedule="scaled_linear", clip_sample=False,
+        #                   set_alpha_to_one=False, steps_offset=1)
+        # drag_model = StableDiffusionPipeline.from_pretrained(model_path, scheduler=scheduler).to(device)
+        drag_model = StableDiffusion(self.device)
 
         for i in range(self.opt.batch_size):
             # set batch_size = 4
@@ -225,12 +271,12 @@ class GUI:
             image_pil = Image.fromarray(image_np)
             image_pil.save(f"rendered_images/visualized_image_pil_{i}.png")
             
-            # print("Start DDIM inversion...")
-            # latent_before_editing = DDIM_inversion(source_images=image,
-            #                                     text_embeddings=self.guidance_sd.get_text_embeds)
-            # latents_before_editing.append(latent_before_editing)
+            print("Start DDIM inversion...")
+            latent_before_editing = DDIM_inversion(source_images=image,
+                                                text_embeddings=self.guidance_sd.get_text_embeds)
+            latents_before_editing.append(latent_before_editing)
 
-        sys.exit()
+        # sys.exit()
         images = torch.cat(images, dim = 0)
         poses = torch.from_numpy(np.stack(poses, axis=0)).to(self.device)        
 
@@ -240,11 +286,59 @@ class GUI:
             loss = 0
 
             # one step motion supervision & point tracking
+            pos_embeds = self.guidance_sd.encode_text(self.prompt)  # [1, 77, 768]
             for i in range(self.opt.batch_size):
-                latent_after_editing = drag(latents_before_editing[i],
-                                            start_points,
-                                            end_points)
+
+                assert len(start_points[0]) == len(end_points[0]), \
+                    "number of handle point must equals target points"
+                if pos_embeds is None:
+                    # text_embeddings = drag_model.get_text_embeddings(args.prompt)
+                    print("Warning: please input text prompts.")
+
+                init_code = latents_before_editing[i]
+
+                # the init output feature of unet
+                with torch.no_grad():
+                    unet_output, F0 = drag_model.forward_unet_features(init_code, t, encoder_hidden_states=text_embeddings,
+                        layer_idx=args.unet_feature_idx, interp_res_h=args.sup_res_h, interp_res_w=args.sup_res_w)
+                    x_prev_0,_ = drag_model.step(unet_output, t, init_code)
+                    # init_code_orig = copy.deepcopy(init_code)
+
+                # prepare optimizable init_code
+                init_code.requires_grad_(True)
+
+                # prepare for point tracking and background regularization
+                handle_points_init = copy.deepcopy(start_points)
+                mask = self.get_2d_mask(self.opt.mask_dir)
+                print("input mask shape:", mask.shape)
+                interp_mask = F.interpolate(mask, (init_code.shape[2],init_code.shape[3]), mode='nearest')
+                using_mask = interp_mask.sum() != 0.0
+
+
+                drag_model.scheduler.set_timesteps(args.n_inference_step)
+                t = drag_model.scheduler.timesteps[args.n_inference_step - args.n_actual_inference_step]
+
+                latent_after_editing = drag_step(
+                    drag_model,
+                    latents_before_editing[i],
+                    text_embeddings = pos_embeds,
+                    t = t,
+                    handle_points = start_points,
+                    handle_points_init = handle_points_init,
+                    target_points = end_points,
+                    mask = None,
+                    step_idx = i,
+                    F0 = F0,
+                    using_mask = using_mask,
+                    x_prev_0 = x_prev_0,
+                    interp_mask = interp_mask,
+                    args = self.opt)
+                
+                if latent_after_editing == None:
+                    break
+                
                 latents_after_editing.append(latent_after_editing)
+
                 # *** loss calculation: add latent after editing
                 loss = loss + self.opt.lambda_sd * self.guidance_sd.draggs_train_step(latent_after_editing, image[i], step_ratio=step_ratio if self.opt.anneal_timestep else None)
 
