@@ -427,7 +427,8 @@ class StableDiffusion(nn.Module):
             text_embeddings = self.get_text_embeddings(prompt)
 
         # define initial latents
-        latents = self.image2latent(image)
+        image = image.half()
+        latents = self.encode_imgs(image)
 
         # unconditional embedding for classifier free guidance
         if guidance_scale > 1.:
@@ -458,7 +459,7 @@ class StableDiffusion(nn.Module):
                 model_inputs = latents
 
             # predict the noise
-            noise_pred = self.unet(model_inputs, t, encoder_hidden_states=text_embeddings)
+            noise_pred = self.unet(model_inputs, t, encoder_hidden_states=text_embeddings).sample
             if guidance_scale > 1.:
                 noise_pred_uncon, noise_pred_con = noise_pred.chunk(2, dim=0)
                 noise_pred = noise_pred_uncon + guidance_scale * (noise_pred_con - noise_pred_uncon)

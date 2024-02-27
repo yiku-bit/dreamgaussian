@@ -26,6 +26,7 @@ from drag import drag_step
 import copy
 import json
 from einops import rearrange
+import gradio as gr
 
 class GUI:
     def __init__(self, opt):
@@ -66,6 +67,9 @@ class GUI:
         # input text
         self.prompt = ""
         self.negative_prompt = ""
+
+        # text pos_embeds
+        self.pos_embeds = None
 
         # training stuff
         self.training = False
@@ -173,6 +177,9 @@ class GUI:
             if self.enable_zero123:
                 self.guidance_zero123.get_img_embeds(self.input_img_torch)
 
+        # prepare pos_embeddings
+        self.pos_embeds = self.guidance_sd.encode_text(self.prompt)  # [1, 77, 768]
+
     def get_2d_mask(self, mask_dir):
         source_images, imgname2idx = load_and_preprocess_images(args.folder_path, device="cuda")
         if mask_dir is not None:
@@ -271,12 +278,24 @@ class GUI:
             image_pil = Image.fromarray(image_np)
             image_pil.save(f"rendered_images/visualized_image_pil_{i}.png")
             
-            print("Start DDIM inversion...")
-            latent_before_editing = DDIM_inversion(source_images=image,
-                                                text_embeddings=self.guidance_sd.get_text_embeds)
-            latents_before_editing.append(latent_before_editing)
+            
+        # latent_before_editing = DDIM_inversion(source_images=image,
+        #                                    text_embeddings=self.guidance_sd.get_text_embeds)
+        inversion_strength = 0.7
+        n_actual_inference_step = round(inversion_strength * self.opt.n_inference_step)
+        images = torch.cat(images, dim=0)
+        print("Start DDIM inversion...")
+        latents_before_editings = self.guidance_sd.invert(images,
+                                                    self.prompt,
+                                                    text_embeddings=self.pos_embeds,
+                                                    guidance_scale=self.opt.guidance_scale,
+                                                    num_inference_steps=self.opt.n_inference_step,
+                                                    num_actual_inference_steps=n_actual_inference_step)
+        print("invert code shape:", latents_before_editings.shape)
+        # latents_before_editing.append(latent_before_editing)
 
-        # sys.exit()
+
+        sys.exit()
         images = torch.cat(images, dim = 0)
         poses = torch.from_numpy(np.stack(poses, axis=0)).to(self.device)        
 
@@ -286,12 +305,11 @@ class GUI:
             loss = 0
 
             # one step motion supervision & point tracking
-            pos_embeds = self.guidance_sd.encode_text(self.prompt)  # [1, 77, 768]
             for i in range(self.opt.batch_size):
 
                 assert len(start_points[0]) == len(end_points[0]), \
                     "number of handle point must equals target points"
-                if pos_embeds is None:
+                if self.pos_embeds is None:
                     # text_embeddings = drag_model.get_text_embeddings(args.prompt)
                     print("Warning: please input text prompts.")
 
@@ -299,7 +317,7 @@ class GUI:
 
                 # the init output feature of unet
                 with torch.no_grad():
-                    unet_output, F0 = drag_model.forward_unet_features(init_code, t, encoder_hidden_states=text_embeddings,
+                    unet_output, F0 = drag_model.forward_unet_features(init_code, t, encoder_hidden_states=self.pos_embeds,
                         layer_idx=args.unet_feature_idx, interp_res_h=args.sup_res_h, interp_res_w=args.sup_res_w)
                     x_prev_0,_ = drag_model.step(unet_output, t, init_code)
                     # init_code_orig = copy.deepcopy(init_code)
@@ -321,7 +339,7 @@ class GUI:
                 latent_after_editing = drag_step(
                     drag_model,
                     latents_before_editing[i],
-                    text_embeddings = pos_embeds,
+                    text_embeddings = self.pos_embeds,
                     t = t,
                     handle_points = start_points,
                     handle_points_init = handle_points_init,
