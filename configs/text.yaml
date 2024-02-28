@@ -83,6 +83,9 @@ densify_grad_threshold: 0.01
 ### Drag diffusion
 dragdiffusion_lr: 
 guidance_scale: 1.0
+unet_feature_idx: 
+sup_res_h: 
+sup_res_w:
 
 ### DDIM inversion
 n_inference_step: 80

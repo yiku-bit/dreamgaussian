@@ -253,7 +253,7 @@ class GUI:
 
         #vers = [0, 0, 0, 0]
         #hors = [-180, -90, 0, 90]
-        vers = [0, 90, 0, 90]
+        vers = [0, 0, 0, 0]
         hors = [-90, -90, 90, 90]
         poses = [[
                 [
@@ -354,8 +354,7 @@ class GUI:
                     0.0,
                     0.0,
                     1.0
-                ]
-                ]
+                ]]
                 ]
         
         poses = np.array(poses, dtype=np.float64)
@@ -380,9 +379,9 @@ class GUI:
 
 
             pose = orbit_camera(self.opt.elevation + vers[i], hors[i], self.opt.radius + radius)
-            print(pose.type)
+            print(pose)
             # poses.append(pose)
-            print(poses[i].type)
+            print(poses[i])
             cur_cam = MiniCam(poses[i], render_resolution, render_resolution, self.cam.fovy, self.cam.fovx, self.cam.near, self.cam.far)
             # bg_color = torch.tensor([1, 1, 1] if np.random.rand() > self.opt.invert_bg_prob else [0, 0, 0], dtype=torch.float32, device="cuda")
             bg_color = torch.tensor([0, 0, 0],  dtype=torch.float32, device="cuda")
@@ -460,7 +459,7 @@ class GUI:
         # the init output feature of unet
         with torch.no_grad():
             unet_output, F0 = drag_model.forward_unet_features(init_codes, t, encoder_hidden_states=self.pos_embeds,
-                layer_idx=args.unet_feature_idx, interp_res_h=args.sup_res_h, interp_res_w=args.sup_res_w)
+                layer_idx=self.opt.unet_feature_idx, interp_res_h=self.opt.sup_res_h, interp_res_w=self.opt.sup_res_w)
             x_prev_0,_ = drag_model.step(unet_output, t, init_codes)
             # init_code_orig = copy.deepcopy(init_code)
 
