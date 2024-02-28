@@ -27,6 +27,7 @@ import copy
 import json
 from einops import rearrange
 import gradio as gr
+from copy import deepcopy
 
 class GUI:
     def __init__(self, opt):
@@ -179,6 +180,7 @@ class GUI:
 
         # prepare pos_embeddings
         self.pos_embeds = self.guidance_sd.encode_text(self.prompt)  # [1, 77, 768]
+        # self.guidance_sd.get_text_embeds([self.prompt], [self.negative_prompt])
 
     def get_2d_mask(self, mask_dir):
         source_images, imgname2idx = load_and_preprocess_images(args.folder_path, device="cuda")
@@ -246,6 +248,8 @@ class GUI:
         # drag_model = StableDiffusionPipeline.from_pretrained(model_path, scheduler=scheduler).to(device)
         drag_model = StableDiffusion(self.device)
 
+        self.pos_embeds = self.pos_embeds.repeat(4, 1, 1)
+
         for i in range(self.opt.batch_size):
             # set batch_size = 4
 
@@ -276,26 +280,51 @@ class GUI:
             image_np = image.squeeze(0).permute(1, 2, 0).cpu().detach().numpy()
             image_np = (image_np * 255).astype('uint8')
             image_pil = Image.fromarray(image_np)
-            image_pil.save(f"rendered_images/visualized_image_pil_{i}.png")
+            image_pil.save(f"rendered_images/visualized_image_before_DDIMinversion_{i}.png")
             
             
         # latent_before_editing = DDIM_inversion(source_images=image,
         #                                    text_embeddings=self.guidance_sd.get_text_embeds)
-        inversion_strength = 0.7
+        inversion_strength = 1
         n_actual_inference_step = round(inversion_strength * self.opt.n_inference_step)
         images = torch.cat(images, dim=0)
         print("Start DDIM inversion...")
-        latents_before_editings = self.guidance_sd.invert(images,
-                                                    self.prompt,
+        latents_before_editing = self.guidance_sd.invert(images,
+                                                    prompt=self.prompt,
                                                     text_embeddings=self.pos_embeds,
                                                     guidance_scale=self.opt.guidance_scale,
                                                     num_inference_steps=self.opt.n_inference_step,
                                                     num_actual_inference_steps=n_actual_inference_step)
-        print("invert code shape:", latents_before_editings.shape)
-        # latents_before_editing.append(latent_before_editing)
+        print("invert code shape:", latents_before_editing.shape)
+        
+        init_code = latents_before_editing
+        init_code_orig = deepcopy(init_code)
+        double_pos_embeds = self.pos_embeds.repeat(2, 1, 1)
+        gen_image = self.guidance_sd.sampling(prompt=self.prompt,
+                                        batch_size=self.opt.batch_size,
+                                        text_embeddings=double_pos_embeds,
+                                        latents=torch.cat([init_code_orig, init_code_orig], dim=0),
+                                        guidance_scale=self.opt.guidance_scale,
+                                        num_inference_steps=self.opt.n_inference_step,
+                                        num_actual_inference_steps=n_actual_inference_step)
 
+        # ***test sampling
+        # test_prompt = "An apple."
+        # test_text_embeds = self.guidance_sd.encode_text(test_prompt)
+        # gen_image = self.guidance_sd.sampling(prompt= test_prompt,
+        #                                       guidance_scale=self.opt.guidance_scale,
+        #                                       text_embeddings=test_text_embeds)
+        
+        print(gen_image.shape)
 
-        sys.exit()
+        # ***images visualize
+        for i in range(8):
+            image_np = gen_image[i].squeeze(0).permute(1, 2, 0).cpu().detach().numpy()
+            image_np = (image_np * 255).astype('uint8')
+            image_pil = Image.fromarray(image_np)
+            image_pil.save(f"rendered_images/sampling_results_{i}.png")
+
+        # sys.exit()
         images = torch.cat(images, dim = 0)
         poses = torch.from_numpy(np.stack(poses, axis=0)).to(self.device)        
 

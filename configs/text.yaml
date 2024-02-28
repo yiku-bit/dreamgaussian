@@ -85,7 +85,7 @@ dragdiffusion_lr:
 guidance_scale: 1.0
 
 ### DDIM inversion
-n_inference_step: 50
+n_inference_step: 80
 
 ### Textured Mesh
 geom_lr: 0.0001

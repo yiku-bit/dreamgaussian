@@ -401,12 +401,84 @@ class StableDiffusion(nn.Module):
         return x_next, pred_x0
     
     @torch.no_grad()
+    def sampling(
+        self,
+        prompt,
+        text_embeddings=None, # whether text embedding is directly provided.
+        batch_size=1,
+        height=512,
+        width=512,
+        num_inference_steps=50,
+        num_actual_inference_steps=None,
+        guidance_scale=7.5,
+        latents=None,
+        neg_prompt=None,
+        return_intermediates=False,
+        **kwds):
+        DEVICE = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+
+        if text_embeddings is None:
+            if isinstance(prompt, list):
+                batch_size = len(prompt)
+            elif isinstance(prompt, str):
+                if batch_size > 1:
+                    prompt = [prompt] * batch_size
+            # text embeddings
+            text_embeddings = self.get_text_embeddings(prompt)
+
+        # define initial latents if not predefined
+        if latents is None:
+            latents_shape = (batch_size, self.unet.in_channels, height//8, width//8)
+            latents = torch.randn(latents_shape, device=DEVICE, dtype=self.vae.dtype)
+
+        # unconditional embedding for classifier free guidance
+        if guidance_scale > 1.:
+            if neg_prompt:
+                uc_text = neg_prompt
+            else:
+                uc_text = ""
+            unconditional_embeddings = self.get_text_embeddings([uc_text]*batch_size)
+            text_embeddings = torch.cat([unconditional_embeddings, text_embeddings], dim=0)
+
+        print("latents shape1: ", latents.shape)
+        # iterative sampling
+        self.scheduler.set_timesteps(num_inference_steps)
+        # print("Valid timesteps: ", reversed(self.scheduler.timesteps))
+        if return_intermediates:
+            latents_list = [latents]
+        for i, t in enumerate(tqdm(self.scheduler.timesteps, desc="DDIM Sampler")):
+            if num_actual_inference_steps is not None and i < num_inference_steps - num_actual_inference_steps:
+                continue
+
+            if guidance_scale > 1.:
+                model_inputs = torch.cat([latents] * 2)
+            else:
+                model_inputs = latents
+            # predict the noise
+            noise_pred = self.unet(model_inputs, t, encoder_hidden_states=text_embeddings).sample
+            if guidance_scale > 1.0:
+                noise_pred_uncon, noise_pred_con = noise_pred.chunk(2, dim=0)
+                noise_pred = noise_pred_uncon + guidance_scale * (noise_pred_con - noise_pred_uncon)
+            # compute the previous noise sample x_t -> x_t-1
+            # YUJUN: right now, the only difference between step here and step in scheduler
+            # is that scheduler version would clamp pred_x0 between [-1,1]
+            # don't know if that's gonna have huge impact
+            latents = self.scheduler.step(noise_pred, t, latents, return_dict=False)[0]
+            if return_intermediates:
+                latents_list.append(latents)
+        print("latents shape2: ", latents.shape)
+        image = self.decode_latents(latents)
+        if return_intermediates:
+            return image, latents_list
+        return image
+
+    @torch.no_grad()
     def invert(
         self,
         image: torch.Tensor,
         prompt,
         text_embeddings=None,
-        num_inference_steps=50,
+        num_inference_steps=70,
         num_actual_inference_steps=None,
         guidance_scale=7.5,
         eta=0.0,
@@ -459,6 +531,9 @@ class StableDiffusion(nn.Module):
                 model_inputs = latents
 
             # predict the noise
+            print(model_inputs.shape)
+            print(t.shape)
+            print(text_embeddings.shape)
             noise_pred = self.unet(model_inputs, t, encoder_hidden_states=text_embeddings).sample
             if guidance_scale > 1.:
                 noise_pred_uncon, noise_pred_con = noise_pred.chunk(2, dim=0)
