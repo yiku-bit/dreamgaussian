@@ -22,7 +22,7 @@ from PIL import Image
 from diffusers import StableDiffusionPipeline, DDIMScheduler
 from guidance.sd_utils import StableDiffusion
 
-from drag import drag_step
+from drag import drag_step, override_forward
 import copy
 import json
 from einops import rearrange
@@ -239,6 +239,7 @@ class GUI:
         max_ver = min(max(self.opt.max_ver, self.opt.max_ver - self.opt.elevation), 80 - self.opt.elevation)
 
         start_hor = -180
+        start_ver = -180
 
         # initialize model
         # device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
@@ -250,24 +251,139 @@ class GUI:
 
         self.pos_embeds = self.pos_embeds.repeat(4, 1, 1)
 
+        #vers = [0, 0, 0, 0]
+        #hors = [-180, -90, 0, 90]
+        vers = [0, 90, 0, 90]
+        hors = [-90, -90, 90, 90]
+        poses = [[
+                [
+                    0.3260957896709442,
+                    0.14048941433429718,
+                    -0.934839129447937,
+                    -3.7684571743011475
+                ],
+                [
+                    -0.9453368186950684,
+                    0.04846210405230522,
+                    -0.3224746286869049,
+                    -1.2999367713928223
+                ],
+                [
+                    0.0,
+                    0.9888953566551208,
+                    0.1486130952835083,
+                    0.5990785360336304
+                ],
+                [
+                    0.0,
+                    0.0,
+                    0.0,
+                    1.0
+                ]],
+                [
+                [
+                    0.462623655796051,
+                    -0.4831503927707672,
+                    0.7433337569236755,
+                    2.996474266052246
+                ],
+                [
+                    0.8865548372268677,
+                    0.25211840867996216,
+                    -0.38788774609565735,
+                    -1.5636255741119385
+                ],
+                [
+                    0.0,
+                    0.8384521007537842,
+                    0.544975221157074,
+                    2.1968653202056885
+                ],
+                [
+                    0.0,
+                    0.0,
+                    0.0,
+                    1.0
+                ]],
+                [
+                [
+                    -0.9964723587036133,
+                    0.0291383545845747,
+                    -0.07870139926671982,
+                    -0.31725549697875977
+                ],
+                [
+                    -0.08392231911420822,
+                    -0.3459814488887787,
+                    0.9344804883003235,
+                    3.7670114040374756
+                ],
+                [
+                    0.0,
+                    0.937788724899292,
+                    0.3472062945365906,
+                    1.3996332883834839
+                ],
+                [
+                    0.0,
+                    0.0,
+                    0.0,
+                    1.0
+                ]],
+                [
+                [
+                    0.9830045104026794,
+                    0.045349299907684326,
+                    -0.17789188027381897,
+                    -0.7171050906181335
+                ],
+                [
+                    -0.18358123302459717,
+                    0.24282744526863098,
+                    -0.9525401592254639,
+                    -3.8398122787475586
+                ],
+                [
+                    3.725290298461914e-09,
+                    0.9690088033676147,
+                    0.2470257729291916,
+                    0.9957927465438843
+                ],
+                [
+                    0.0,
+                    0.0,
+                    0.0,
+                    1.0
+                ]
+                ]
+                ]
+        
+        poses = np.array(poses, dtype=np.float64)
+
         for i in range(self.opt.batch_size):
             # set batch_size = 4
 
             # render i/4 view
-            ver = 0
-            hor = start_hor # -180, -90, 0, 90
+            # ver = 0
+            # hor = start_hor # -180, -90, 0, 90
+            # ver = start_ver
+            # hor = 0
             # hor = np.random.randint(-180, 180)
-            start_hor += 90
+            # start_hor += 90
+            # start_ver += 90
             radius = 0
 
-            vers.append(ver)
-            hors.append(hor)
+            # vers.append(ver)
+            # hors.append(hor)
             radii.append(radius)
-            
-            pose = orbit_camera(self.opt.elevation + ver, hor, self.opt.radius + radius)
-            poses.append(pose)
 
-            cur_cam = MiniCam(pose, render_resolution, render_resolution, self.cam.fovy, self.cam.fovx, self.cam.near, self.cam.far)
+
+
+            pose = orbit_camera(self.opt.elevation + vers[i], hors[i], self.opt.radius + radius)
+            print(pose.type)
+            # poses.append(pose)
+            print(poses[i].type)
+            cur_cam = MiniCam(poses[i], render_resolution, render_resolution, self.cam.fovy, self.cam.fovx, self.cam.near, self.cam.far)
             # bg_color = torch.tensor([1, 1, 1] if np.random.rand() > self.opt.invert_bg_prob else [0, 0, 0], dtype=torch.float32, device="cuda")
             bg_color = torch.tensor([0, 0, 0],  dtype=torch.float32, device="cuda")
             out = self.renderer.render(cur_cam, bg_color=bg_color)
@@ -325,8 +441,43 @@ class GUI:
             image_pil.save(f"rendered_images/sampling_results_{i}.png")
 
         # sys.exit()
-        images = torch.cat(images, dim = 0)
         poses = torch.from_numpy(np.stack(poses, axis=0)).to(self.device)        
+        self.guidance_sd.unet.forward = override_forward(self.guidance_sd.unet)
+
+
+
+
+
+
+        assert len(start_points[0]) == len(end_points[0]), \
+            "number of handle point must equals target points"
+        if self.pos_embeds is None:
+            # text_embeddings = drag_model.get_text_embeddings(args.prompt)
+            print("Warning: please input text prompts.")
+
+        init_codes = latents_before_editing
+
+        # the init output feature of unet
+        with torch.no_grad():
+            unet_output, F0 = drag_model.forward_unet_features(init_codes, t, encoder_hidden_states=self.pos_embeds,
+                layer_idx=args.unet_feature_idx, interp_res_h=args.sup_res_h, interp_res_w=args.sup_res_w)
+            x_prev_0,_ = drag_model.step(unet_output, t, init_codes)
+            # init_code_orig = copy.deepcopy(init_code)
+
+        # prepare optimizable init_code
+        init_code.requires_grad_(True)
+
+        # prepare for point tracking and background regularization
+        handle_points_init = copy.deepcopy(start_points)
+        mask = self.get_2d_mask(self.opt.mask_dir)
+        print("input mask shape:", mask.shape)
+        interp_mask = F.interpolate(mask, (init_code.shape[2],init_code.shape[3]), mode='nearest')
+        using_mask = interp_mask.sum() != 0.0
+
+
+        drag_model.scheduler.set_timesteps(args.n_inference_step)
+        t = drag_model.scheduler.timesteps[args.n_inference_step - args.n_actual_inference_step]
+
 
         for _ in range(self.dragging_steps):
             latents_after_editing = []
@@ -336,34 +487,6 @@ class GUI:
             # one step motion supervision & point tracking
             for i in range(self.opt.batch_size):
 
-                assert len(start_points[0]) == len(end_points[0]), \
-                    "number of handle point must equals target points"
-                if self.pos_embeds is None:
-                    # text_embeddings = drag_model.get_text_embeddings(args.prompt)
-                    print("Warning: please input text prompts.")
-
-                init_code = latents_before_editing[i]
-
-                # the init output feature of unet
-                with torch.no_grad():
-                    unet_output, F0 = drag_model.forward_unet_features(init_code, t, encoder_hidden_states=self.pos_embeds,
-                        layer_idx=args.unet_feature_idx, interp_res_h=args.sup_res_h, interp_res_w=args.sup_res_w)
-                    x_prev_0,_ = drag_model.step(unet_output, t, init_code)
-                    # init_code_orig = copy.deepcopy(init_code)
-
-                # prepare optimizable init_code
-                init_code.requires_grad_(True)
-
-                # prepare for point tracking and background regularization
-                handle_points_init = copy.deepcopy(start_points)
-                mask = self.get_2d_mask(self.opt.mask_dir)
-                print("input mask shape:", mask.shape)
-                interp_mask = F.interpolate(mask, (init_code.shape[2],init_code.shape[3]), mode='nearest')
-                using_mask = interp_mask.sum() != 0.0
-
-
-                drag_model.scheduler.set_timesteps(args.n_inference_step)
-                t = drag_model.scheduler.timesteps[args.n_inference_step - args.n_actual_inference_step]
 
                 latent_after_editing = drag_step(
                     drag_model,
@@ -388,6 +511,9 @@ class GUI:
 
                 # *** loss calculation: add latent after editing
                 loss = loss + self.opt.lambda_sd * self.guidance_sd.draggs_train_step(latent_after_editing, image[i], step_ratio=step_ratio if self.opt.anneal_timestep else None)
+                
+            print(loss)
+
 
             loss.backward()
             self.optimizer.step()
