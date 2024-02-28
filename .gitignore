@@ -6,6 +6,7 @@ venv_*/
 .vs/
 .vscode/
 .idea/
+rendered_images/
 
 tmp_*
 data?
