@@ -732,13 +732,18 @@ class  MiniCam:
         self.znear = znear
         self.zfar = zfar
 
+        print("FoVy", self.FoVy.dtype)
+        print("FoVx", self.FoVx.dtype)
+
+
+
         w2c = np.linalg.inv(c2w)
 
         # rectify...
         w2c[1:3, :3] *= -1
         w2c[:3, 3] *= -1
 
-        self.world_view_transform = torch.tensor(w2c, dtype=torch.float32).transpose(0, 1).cuda()
+        self.world_view_transform = torch.tensor(w2c).transpose(0, 1).cuda()
         self.projection_matrix = (
             getProjectionMatrix(
                 znear=self.znear, zfar=self.zfar, fovX=self.FoVx, fovY=self.FoVy
@@ -747,12 +752,16 @@ class  MiniCam:
             .cuda()
         )
 
-        # self.world_view_transform = self.world_view_transform
-        # self.projection_matrix = self.projection_matrix
-        
+
+        self.world_view_transform = self.world_view_transform.to(dtype = torch.float32)
         self.full_proj_transform = self.world_view_transform @ self.projection_matrix
+
         self.camera_center = -torch.tensor(c2w[:3, 3]).cuda()
         # self.camera_center = self.camera_center.double()
+
+        # print("projection_matrix", self.projection_matrix.dtype)
+        # print("world_view_transform", self.world_view_transform.dtype)
+        # print("full_proj_transform", self.full_proj_transform.dtype)
 
 
 class Renderer:

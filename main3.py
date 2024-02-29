@@ -69,7 +69,8 @@ class GUI:
         self.prompt = ""
         self.negative_prompt = ""
 
-        # text pos_embeds
+        # text embeds
+        self.text_embeds = None
         self.pos_embeds = None
 
         # training stuff
@@ -166,19 +167,20 @@ class GUI:
                 print(f"[INFO] loaded SD!")
 
 
-        # prepare embeddings
-        with torch.no_grad():
+        # # prepare embeddings
+        # with torch.no_grad():
 
-            if self.enable_sd:
-                if self.opt.imagedream:
-                    self.guidance_sd.get_image_text_embeds(self.input_img_torch, [self.prompt], [self.negative_prompt])
-                else:
-                    self.guidance_sd.get_text_embeds([self.prompt], [self.negative_prompt])
+        #     if self.enable_sd:
+        #         if self.opt.imagedream:
+        #             self.guidance_sd.get_image_text_embeds(self.input_img_torch, [self.prompt], [self.negative_prompt])
+        #         else:
+        #             self.guidance_sd.get_text_embeds([self.prompt], [self.negative_prompt])
 
-            if self.enable_zero123:
-                self.guidance_zero123.get_img_embeds(self.input_img_torch)
+        #     if self.enable_zero123:
+        #         self.guidance_zero123.get_img_embeds(self.input_img_torch)
 
-        # prepare pos_embeddings
+        # prepare text_embeddings
+        self.text_embeds = self.guidance_sd.get_text_embeds(self.prompt, self.negative_prompt)
         self.pos_embeds = self.guidance_sd.encode_text(self.prompt)  # [1, 77, 768]
         # self.guidance_sd.get_text_embeds([self.prompt], [self.negative_prompt])
 
@@ -227,11 +229,13 @@ class GUI:
         # update lr
         self.renderer.gaussians.update_learning_rate(self.step)
         
-        render_resolution = 128 if step_ratio < 0.3 else (256 if step_ratio < 0.6 else 512)
+        # render_resolution = 128 if step_ratio < 0.3 else (256 if step_ratio < 0.6 else 512)
+        render_resolution = 256
         images = []
         poses = []  
         vers, hors, radii = [], [], []
-        start_points, end_points = [], []
+        start_points = [[[630, 235]], [[190, 235]], [[148, 229]], [[650, 217]]]
+        end_points = [[[630, 427]],[[190, 427]],[[148, 421]],[[650, 409]]]
         latents_before_editing = []
         masks = []
         # avoid too large elevation (> 80 or < -80), and make sure it always cover [min_ver, max_ver]
@@ -257,107 +261,106 @@ class GUI:
         hors = [-90, -90, 90, 90]
         poses = [[
                 [
-                    0.3260957896709442,
-                    0.14048941433429718,
-                    -0.934839129447937,
-                    -3.7684571743011475
+                    0.3260957896709442e+00,
+                    0.14048941433429718e+00,
+                    -0.934839129447937e+00,
+                    -3.768457174301147e+00
                 ],
                 [
-                    -0.9453368186950684,
-                    0.04846210405230522,
-                    -0.3224746286869049,
-                    -1.2999367713928223
+                    -0.9453368186950684e+00,
+                    0.04846210405230522e+00,
+                    -0.3224746286869049e+00,
+                    -1.2999367713928223e+00
                 ],
                 [
-                    0.0,
-                    0.9888953566551208,
-                    0.1486130952835083,
-                    0.5990785360336304
+                    0.0000000000000000e+00,
+                    0.9888953566551208e+00,
+                    0.1486130952835083e+00,
+                    0.5990785360336304e+00
                 ],
                 [
-                    0.0,
-                    0.0,
-                    0.0,
-                    1.0
+                    0.0000000000000000e+00,
+                    0.0000000000000000e+00,
+                    0.0000000000000000e+00,
+                    1.0000000000000000e+00
                 ]],
                 [
                 [
-                    0.462623655796051,
-                    -0.4831503927707672,
-                    0.7433337569236755,
-                    2.996474266052246
+                    0.462623655796051e+00,
+                    -0.4831503927707672e+00,
+                    0.7433337569236755e+00,
+                    2.996474266052246e+00
                 ],
                 [
-                    0.8865548372268677,
-                    0.25211840867996216,
-                    -0.38788774609565735,
-                    -1.5636255741119385
+                    0.8865548372268677e+00,
+                    0.25211840867996216e+00,
+                    -0.38788774609565735e+00,
+                    -1.5636255741119385e+00
                 ],
                 [
-                    0.0,
-                    0.8384521007537842,
-                    0.544975221157074,
-                    2.1968653202056885
+                    0.0000000000000000e+00,
+                    0.8384521007537842e+00,
+                    0.544975221157074e+00,
+                    2.1968653202056885e+00
                 ],
                 [
-                    0.0,
-                    0.0,
-                    0.0,
-                    1.0
+                    0.0000000000000000e+00,
+                    0.0000000000000000e+00,
+                    0.0000000000000000e+00,
+                    1.0000000000000000e+00
                 ]],
                 [
                 [
-                    -0.9964723587036133,
-                    0.0291383545845747,
-                    -0.07870139926671982,
-                    -0.31725549697875977
+                    -0.9964723587036133e+00,
+                    0.0291383545845747e+00,
+                    -0.07870139926671982e+00,
+                    -0.31725549697875977e+00
                 ],
                 [
-                    -0.08392231911420822,
-                    -0.3459814488887787,
-                    0.9344804883003235,
-                    3.7670114040374756
+                    -0.08392231911420822e+00,
+                    -0.3459814488887787e+00,
+                    0.9344804883003235e+00,
+                    3.7670114040374756e+00
                 ],
                 [
-                    0.0,
-                    0.937788724899292,
-                    0.3472062945365906,
-                    1.3996332883834839
+                    0.000000000000000e+00,
+                    0.937788724899292e+00,
+                    0.3472062945365906e+00,
+                    1.3996332883834839e+00
                 ],
                 [
-                    0.0,
-                    0.0,
-                    0.0,
-                    1.0
+                    0.0000000000000000e+00,
+                    0.0000000000000000e+00,
+                    0.0000000000000000e+00,
+                    1.0000000000000000e+00
                 ]],
                 [
                 [
-                    0.9830045104026794,
-                    0.045349299907684326,
-                    -0.17789188027381897,
-                    -0.7171050906181335
+                    0.9830045104026794e+00,
+                    0.045349299907684326e+00,
+                    -0.17789188027381897e+00,
+                    -0.7171050906181335e+00
                 ],
                 [
-                    -0.18358123302459717,
-                    0.24282744526863098,
-                    -0.9525401592254639,
-                    -3.8398122787475586
+                    -0.18358123302459717e+00,
+                    0.24282744526863098e+00,
+                    -0.9525401592254639e+00,
+                    -3.8398122787475586e+00
                 ],
                 [
                     3.725290298461914e-09,
-                    0.9690088033676147,
-                    0.2470257729291916,
-                    0.9957927465438843
+                    0.9690088033676147e+00,
+                    0.2470257729291916e+00,
+                    0.9957927465438843e+00
                 ],
                 [
-                    0.0,
-                    0.0,
-                    0.0,
-                    1.0
+                    0.0000000000000000e+00,
+                    0.0000000000000000e+00,
+                    0.0000000000000000e+00,
+                    1.0000000000000000e+00
                 ]]
                 ]
         
-        poses = np.array(poses, dtype=np.float64)
 
         for i in range(self.opt.batch_size):
             # set batch_size = 4
@@ -378,10 +381,10 @@ class GUI:
 
 
 
-            pose = orbit_camera(self.opt.elevation + vers[i], hors[i], self.opt.radius + radius)
-            print(pose)
-            # poses.append(pose)
-            print(poses[i])
+            # pose = orbit_camera(self.opt.elevation + vers[i], hors[i], self.opt.radius + radius)
+
+
+            poses = torch.tensor(poses, dtype=torch.float32)
             cur_cam = MiniCam(poses[i], render_resolution, render_resolution, self.cam.fovy, self.cam.fovx, self.cam.near, self.cam.far)
             # bg_color = torch.tensor([1, 1, 1] if np.random.rand() > self.opt.invert_bg_prob else [0, 0, 0], dtype=torch.float32, device="cuda")
             bg_color = torch.tensor([0, 0, 0],  dtype=torch.float32, device="cuda")
@@ -400,7 +403,7 @@ class GUI:
             
         # latent_before_editing = DDIM_inversion(source_images=image,
         #                                    text_embeddings=self.guidance_sd.get_text_embeds)
-        inversion_strength = 1
+        inversion_strength = 0.7
         n_actual_inference_step = round(inversion_strength * self.opt.n_inference_step)
         images = torch.cat(images, dim=0)
         print("Start DDIM inversion...")
@@ -430,7 +433,7 @@ class GUI:
         #                                       guidance_scale=self.opt.guidance_scale,
         #                                       text_embeddings=test_text_embeds)
         
-        print(gen_image.shape)
+        print("gen_image:", gen_image.shape)
 
         # ***images visualize
         for i in range(8):
@@ -444,9 +447,8 @@ class GUI:
         self.guidance_sd.unet.forward = override_forward(self.guidance_sd.unet)
 
 
-
-
-
+        drag_model.scheduler.set_timesteps(self.opt.n_inference_step)
+        t = drag_model.scheduler.timesteps[self.opt.n_inference_step - n_actual_inference_step]
 
         assert len(start_points[0]) == len(end_points[0]), \
             "number of handle point must equals target points"
@@ -454,13 +456,17 @@ class GUI:
             # text_embeddings = drag_model.get_text_embeddings(args.prompt)
             print("Warning: please input text prompts.")
 
-        init_codes = latents_before_editing
+        
+        sup_res_h = 128
+        sup_res_w = 128
+
+        print("init_code:", init_code.shape)
 
         # the init output feature of unet
         with torch.no_grad():
-            unet_output, F0 = drag_model.forward_unet_features(init_codes, t, encoder_hidden_states=self.pos_embeds,
-                layer_idx=self.opt.unet_feature_idx, interp_res_h=self.opt.sup_res_h, interp_res_w=self.opt.sup_res_w)
-            x_prev_0,_ = drag_model.step(unet_output, t, init_codes)
+            unet_output, F0 = drag_model.forward_unet_features(init_code, t, encoder_hidden_states=self.text_embeds,
+                layer_idx=self.opt.unet_feature_idx, interp_res_h=sup_res_h, interp_res_w=sup_res_w)
+            x_prev_0,_ = drag_model.step(unet_output, t, init_code)
             # init_code_orig = copy.deepcopy(init_code)
 
         # prepare optimizable init_code
@@ -474,9 +480,6 @@ class GUI:
         using_mask = interp_mask.sum() != 0.0
 
 
-        drag_model.scheduler.set_timesteps(args.n_inference_step)
-        t = drag_model.scheduler.timesteps[args.n_inference_step - args.n_actual_inference_step]
-
 
         for _ in range(self.dragging_steps):
             latents_after_editing = []
@@ -485,7 +488,6 @@ class GUI:
 
             # one step motion supervision & point tracking
             for i in range(self.opt.batch_size):
-
 
                 latent_after_editing = drag_step(
                     drag_model,

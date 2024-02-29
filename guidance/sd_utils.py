@@ -103,6 +103,24 @@ class StableDiffusion(nn.Module):
         )
         embeddings = self.text_encoder(inputs.input_ids.to(self.device))[0]
         return embeddings
+    
+    def step(
+    self,
+    model_output: torch.FloatTensor,
+    timestep: int,
+    x: torch.FloatTensor,
+    ):
+        """
+        predict the sample of the next step in the denoise process.
+        """
+        prev_timestep = timestep - self.scheduler.config.num_train_timesteps // self.scheduler.num_inference_steps
+        alpha_prod_t = self.scheduler.alphas_cumprod[timestep]
+        alpha_prod_t_prev = self.scheduler.alphas_cumprod[prev_timestep] if prev_timestep > 0 else self.scheduler.final_alpha_cumprod
+        beta_prod_t = 1 - alpha_prod_t
+        pred_x0 = (x - beta_prod_t**0.5 * model_output) / alpha_prod_t**0.5
+        pred_dir = (1 - alpha_prod_t_prev)**0.5 * model_output
+        x_prev = alpha_prod_t_prev**0.5 * pred_x0 + pred_dir
+        return x_prev, pred_x0
 
     @torch.no_grad()
     def refine(self, pred_rgb,
@@ -376,6 +394,24 @@ class StableDiffusion(nn.Module):
         imgs = (imgs * 255).round().astype("uint8")
 
         return imgs
+    
+
+    # get all intermediate features and then do bilinear interpolation
+    # return features in the layer_idx list
+    def forward_unet_features(self, z, t, encoder_hidden_states, layer_idx=[0], interp_res_h=256, interp_res_w=256):
+        unet_output, all_intermediate_features = self.unet(
+            z,
+            t,
+            encoder_hidden_states=encoder_hidden_states
+            )
+
+        all_return_features = []
+        for idx in layer_idx:
+            feat = all_intermediate_features[idx]
+            feat = F.interpolate(feat, (interp_res_h, interp_res_w), mode='bilinear')
+            all_return_features.append(feat)
+        return_features = torch.cat(all_return_features, dim=1)
+        return unet_output, return_features
     
     def inv_step(
         self,
