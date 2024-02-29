@@ -402,7 +402,8 @@ class StableDiffusion(nn.Module):
         unet_output, all_intermediate_features = self.unet(
             z,
             t,
-            encoder_hidden_states=encoder_hidden_states
+            encoder_hidden_states=encoder_hidden_states,
+            return_intermediates=True
             )
 
         all_return_features = []

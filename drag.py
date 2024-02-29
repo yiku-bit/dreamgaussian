@@ -81,10 +81,11 @@ def drag_step(model,
         using_mask,
         x_prev_0,
         interp_mask,
+        scaler,
         args):
     
-    scaler = torch.cuda.amp.GradScaler()
-    optimizer = torch.optim.Adam([init_code], lr=args.drag_diffusion_lr)
+    
+    optimizer = torch.optim.Adam([init_code.detach()], lr=args.drag_diffusion_lr)
     with torch.autocast(device_type='cuda', dtype=torch.float16):
         unet_output, F1 = model.forward_unet_features(init_code, t, encoder_hidden_states=text_embeddings,
             layer_idx=args.unet_feature_idx, interp_res_h=args.sup_res_h, interp_res_w=args.sup_res_w)
@@ -101,7 +102,7 @@ def drag_step(model,
 
         loss = 0.0
         _, _, max_r, max_c = F0.shape
-        for i in range(len(handle_points)):
+        for i in range(handle_points.shape[1]):
             pi, ti = handle_points[:,i,:], target_points[:,i,:]
             # skip if the distance between target and source is less than 1
             if (ti - pi).norm() < 2.:
@@ -122,8 +123,8 @@ def drag_step(model,
                 f1_patch.append(ans.reshape((-1)))
             f0_patch = torch.cat(f0_patch, dim=0)
             f1_patch = torch.cat(f1_patch, dim=0)
-            f0_patch = F1[:,:,r1:r2, c1:c2].detach()
-            f1_patch = interpolate_feature_patch(F1,r1+di[0],r2+di[0],c1+di[1],c2+di[1])
+            #f0_patch = F1[:,:,r1:r2, c1:c2].detach()
+            #f1_patch = interpolate_feature_patch(F1,r1+di[0],r2+di[0],c1+di[1],c2+di[1])
 
             # original code, without boundary protection
             # f0_patch = F1[:,:,int(pi[0])-args.r_m:int(pi[0])+args.r_m+1, int(pi[1])-args.r_m:int(pi[1])+args.r_m+1].detach()
@@ -136,10 +137,10 @@ def drag_step(model,
             # loss += args.lam * ((init_code_orig-init_code)*(1.0-interp_mask)).abs().sum()
             print('loss total=%f'%(loss.item()))
 
-        scaler.scale(loss).backward(retain_graph=True)
-        scaler.step(optimizer)
-        scaler.update()
-        optimizer.zero_grad()
+    scaler.scale(loss).backward(retain_graph=True)
+    scaler.step(optimizer)
+    scaler.update()
+    optimizer.zero_grad()
 
 # override unet forward
 # The only difference from diffusers:
@@ -237,8 +238,8 @@ def override_forward(self):
 
         # 2. pre-process
         sample = self.conv_in(sample)
-
-        # 3. down
+        
+        # 3. down 
         down_block_res_samples = (sample,)
         for downsample_block in self.down_blocks:
             if hasattr(downsample_block, "has_cross_attention") and downsample_block.has_cross_attention:

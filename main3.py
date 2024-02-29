@@ -180,7 +180,6 @@ class GUI:
         #         self.guidance_zero123.get_img_embeds(self.input_img_torch)
 
         # prepare text_embeddings
-        self.text_embeds = self.guidance_sd.get_text_embeds(self.prompt, self.negative_prompt)
         self.pos_embeds = self.guidance_sd.encode_text(self.prompt)  # [1, 77, 768]
         # self.guidance_sd.get_text_embeds([self.prompt], [self.negative_prompt])
 
@@ -234,8 +233,10 @@ class GUI:
         images = []
         poses = []  
         vers, hors, radii = [], [], []
-        start_points = [[[630, 235]], [[190, 235]], [[148, 229]], [[650, 217]]]
-        end_points = [[[630, 427]],[[190, 427]],[[148, 421]],[[650, 409]]]
+        start_points = torch.tensor([[[390, 154]],[[227,127]],[[360, 123]],[[560, 110]]])
+        start_points = (start_points / 800) * 128
+        end_points = torch.tensor([[[390, 84]],[[227, 61]],[[360, 62]],[[560, 34]]])
+        end_points = (end_points / 800) * 128
         latents_before_editing = []
         masks = []
         # avoid too large elevation (> 80 or < -80), and make sure it always cover [min_ver, max_ver]
@@ -250,8 +251,7 @@ class GUI:
         # scheduler = DDIMScheduler(beta_start=0.00085, beta_end=0.012,
         #                   beta_schedule="scaled_linear", clip_sample=False,
         #                   set_alpha_to_one=False, steps_offset=1)
-        # drag_model = StableDiffusionPipeline.from_pretrained(model_path, scheduler=scheduler).to(device)
-        drag_model = StableDiffusion(self.device)
+        # self.guidance_sd = StableDiffusionPipeline.from_pretrained(model_path, scheduler=scheduler).to(device)
 
         self.pos_embeds = self.pos_embeds.repeat(4, 1, 1)
 
@@ -447,26 +447,23 @@ class GUI:
         self.guidance_sd.unet.forward = override_forward(self.guidance_sd.unet)
 
 
-        drag_model.scheduler.set_timesteps(self.opt.n_inference_step)
-        t = drag_model.scheduler.timesteps[self.opt.n_inference_step - n_actual_inference_step]
+        self.guidance_sd.scheduler.set_timesteps(self.opt.n_inference_step)
+        t = self.guidance_sd.scheduler.timesteps[self.opt.n_inference_step - n_actual_inference_step]
 
         assert len(start_points[0]) == len(end_points[0]), \
             "number of handle point must equals target points"
         if self.pos_embeds is None:
-            # text_embeddings = drag_model.get_text_embeddings(args.prompt)
+            # text_embeddings = self.guidance_sd.get_text_embeddings(args.prompt)
             print("Warning: please input text prompts.")
 
-        
-        sup_res_h = 128
-        sup_res_w = 128
 
         print("init_code:", init_code.shape)
 
         # the init output feature of unet
         with torch.no_grad():
-            unet_output, F0 = drag_model.forward_unet_features(init_code, t, encoder_hidden_states=self.text_embeds,
-                layer_idx=self.opt.unet_feature_idx, interp_res_h=sup_res_h, interp_res_w=sup_res_w)
-            x_prev_0,_ = drag_model.step(unet_output, t, init_code)
+            unet_output, F0 = self.guidance_sd.forward_unet_features(init_code, t, encoder_hidden_states=self.pos_embeds,
+                layer_idx=self.opt.unet_feature_idx, interp_res_h=self.opt.sup_res_h, interp_res_w=self.opt.sup_res_w)
+            x_prev_0,_ = self.guidance_sd.step(unet_output, t, init_code)
             # init_code_orig = copy.deepcopy(init_code)
 
         # prepare optimizable init_code
@@ -474,47 +471,40 @@ class GUI:
 
         # prepare for point tracking and background regularization
         handle_points_init = copy.deepcopy(start_points)
-        mask = self.get_2d_mask(self.opt.mask_dir)
-        print("input mask shape:", mask.shape)
-        interp_mask = F.interpolate(mask, (init_code.shape[2],init_code.shape[3]), mode='nearest')
-        using_mask = interp_mask.sum() != 0.0
+        # mask = self.get_2d_mask(self.opt.mask_dir)
+        # print("input mask shape:", mask.shape)
+        # interp_mask = F.interpolate(mask, (init_code.shape[2],init_code.shape[3]), mode='nearest')
+        # using_mask = interp_mask.sum() != 0.0
 
 
-
+        scaler = torch.cuda.amp.GradScaler()
         for _ in range(self.dragging_steps):
-            latents_after_editing = []
-
+            
             loss = 0
+            latents_after_editing = drag_step(
+                self.guidance_sd,
+                latents_before_editing,
+                text_embeddings = self.pos_embeds,
+                t = t,
+                handle_points = start_points,
+                handle_points_init = handle_points_init,
+                target_points = end_points,
+                mask = None,
+                step_idx = i,
+                F0 = F0,
+                using_mask = False,
+                x_prev_0 = x_prev_0,
+                interp_mask = None,
+                scaler = scaler,
+                args = self.opt)
 
             # one step motion supervision & point tracking
             for i in range(self.opt.batch_size):
 
-                latent_after_editing = drag_step(
-                    drag_model,
-                    latents_before_editing[i],
-                    text_embeddings = self.pos_embeds,
-                    t = t,
-                    handle_points = start_points,
-                    handle_points_init = handle_points_init,
-                    target_points = end_points,
-                    mask = None,
-                    step_idx = i,
-                    F0 = F0,
-                    using_mask = using_mask,
-                    x_prev_0 = x_prev_0,
-                    interp_mask = interp_mask,
-                    args = self.opt)
-                
-                if latent_after_editing == None:
-                    break
-                
-                latents_after_editing.append(latent_after_editing)
-
                 # *** loss calculation: add latent after editing
-                loss = loss + self.opt.lambda_sd * self.guidance_sd.draggs_train_step(latent_after_editing, image[i], step_ratio=step_ratio if self.opt.anneal_timestep else None)
+                loss = loss + self.opt.lambda_sd * self.guidance_sd.draggs_train_step(latents_after_editing[i], image[i], step_ratio=step_ratio if self.opt.anneal_timestep else None)
                 
             print(loss)
-
 
             loss.backward()
             self.optimizer.step()

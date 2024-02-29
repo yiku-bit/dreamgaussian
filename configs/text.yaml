@@ -81,10 +81,14 @@ opacity_reset_interval: 700
 densify_grad_threshold: 0.01
 
 ### Drag diffusion
-dragdiffusion_lr: 0.1
+drag_diffusion_lr: 0.1
 guidance_scale: 1.0
-unet_feature_idx: 3
-
+unet_feature_idx: [3]
+sup_res_h: 128
+sup_res_w: 128
+r_p: 3
+r_m: 1
+lam: 0.1
 
 ### DDIM inversion
 n_inference_step: 80
@@ -92,3 +96,7 @@ n_inference_step: 80
 ### Textured Mesh
 geom_lr: 0.0001
 texture_lr: 0.2
+
+### Mask Dir
+mask_dir: 
+
