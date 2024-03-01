@@ -81,11 +81,10 @@ def drag_step(model,
         using_mask,
         x_prev_0,
         interp_mask,
-        scaler,
+        # scaler,
         optimizer,
         args):
 
-    
 
     with torch.autocast(device_type='cuda', dtype=torch.float16):
         unet_output, F1 = model.forward_unet_features(init_code, t, encoder_hidden_states=text_embeddings,
@@ -138,10 +137,15 @@ def drag_step(model,
             # loss += args.lam * ((init_code_orig-init_code)*(1.0-interp_mask)).abs().sum()
             print('loss total=%f'%(loss.item()))
 
-    scaler.scale(loss).backward(retain_graph=True)
-    scaler.step(optimizer)
-    scaler.update()
-    optimizer.zero_grad()
+    # scaler.scale(loss).backward(retain_graph=True)
+    # scaler.step(optimizer)
+    # scaler.update()
+        
+    loss.backward(retain_graph=True)
+    optimizer.step()
+    optimizer.zero_grad()    
+
+    return init_code
 
 
 def drag_step_without_batch(model,

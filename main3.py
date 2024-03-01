@@ -181,7 +181,7 @@ class GUI:
 
         # prepare text_embeddings
         self.pos_embeds = self.guidance_sd.encode_text(self.prompt)  # [1, 77, 768]
-        # self.guidance_sd.get_text_embeds([self.prompt], [self.negative_prompt])
+        self.guidance_sd.get_text_embeds([self.prompt], [self.negative_prompt])
 
     def get_2d_mask(self, mask_dir):
         source_images, imgname2idx = load_and_preprocess_images(args.folder_path, device="cuda")
@@ -216,6 +216,9 @@ class GUI:
         return mask
 
     def train_step(self):
+
+        torch.autograd.set_detect_anomaly(True)
+
         starter = torch.cuda.Event(enable_timing=True)
         ender = torch.cuda.Event(enable_timing=True)
         starter.record()
@@ -416,12 +419,11 @@ class GUI:
         print("invert code shape:", latents_before_editing.shape)
         
         init_code = latents_before_editing
-        init_code_orig = deepcopy(init_code)
         double_pos_embeds = self.pos_embeds.repeat(2, 1, 1)
         gen_image = self.guidance_sd.sampling(prompt=self.prompt,
                                         batch_size=self.opt.batch_size,
                                         text_embeddings=double_pos_embeds,
-                                        latents=torch.cat([init_code_orig, init_code_orig], dim=0),
+                                        latents=torch.cat([init_code, init_code], dim=0),
                                         guidance_scale=self.opt.guidance_scale,
                                         num_inference_steps=self.opt.n_inference_step,
                                         num_actual_inference_steps=n_actual_inference_step)
@@ -479,7 +481,7 @@ class GUI:
         # using_mask = interp_mask.sum() != 0.0
 
         # prepare amp scaler for mixed-precision training
-        scaler = torch.cuda.amp.GradScaler()
+        # scaler = torch.cuda.amp.GradScaler()
         for _ in range(self.dragging_steps):
             
             loss = 0
@@ -497,7 +499,7 @@ class GUI:
                 using_mask = False,
                 x_prev_0 = x_prev_0,
                 interp_mask = None,
-                scaler = scaler,
+                # scaler = scaler,
                 optimizer = optimizer,
                 args = self.opt)
 
@@ -505,25 +507,28 @@ class GUI:
             for i in range(self.opt.batch_size):
 
                 # *** loss calculation: add latent after editing
-                loss = loss + self.opt.lambda_sd * self.guidance_sd.draggs_train_step(latents_after_editing[i], image[i], step_ratio=step_ratio if self.opt.anneal_timestep else None)
-                
-            print(loss)
+                latent_for_sds = latents_after_editing[i].unsqueeze(0)
+                image_for_sds = images[i].unsqueeze(0)
+                # loss = loss + self.opt.lambda_sd * self.guidance_sd.draggs_train_step(latent_for_sds, image_for_sds, step_ratio=step_ratio if self.opt.anneal_timestep else None)
+                loss = loss + self.opt.lambda_sd * self.guidance_sd.train_step(image_for_sds, step_ratio=step_ratio if self.opt.anneal_timestep else None)
 
-            loss.backward()
+            print("sds_loss:", loss.item())
+
+            loss.backward(retain_graph=True)
             self.optimizer.step()
             self.optimizer.zero_grad()
 
         # densify and prune
-        if self.step >= self.opt.density_start_iter and self.step <= self.opt.density_end_iter:
-            viewspace_point_tensor, visibility_filter, radii = out["viewspace_points"], out["visibility_filter"], out["radii"]
-            self.renderer.gaussians.max_radii2D[visibility_filter] = torch.max(self.renderer.gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
-            self.renderer.gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
+        # if self.step >= self.opt.density_start_iter and self.step <= self.opt.density_end_iter:
+        #     viewspace_point_tensor, visibility_filter, radii = out["viewspace_points"], out["visibility_filter"], out["radii"]
+        #     self.renderer.gaussians.max_radii2D[visibility_filter] = torch.max(self.renderer.gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
+        #     self.renderer.gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
 
-            if self.step % self.opt.densification_interval == 0:
-                self.renderer.gaussians.densify_and_prune(self.opt.densify_grad_threshold, min_opacity=0.01, extent=4, max_screen_size=1)
+        #     if self.step % self.opt.densification_interval == 0:
+        #         self.renderer.gaussians.densify_and_prune(self.opt.densify_grad_threshold, min_opacity=0.01, extent=4, max_screen_size=1)
             
-            if self.step % self.opt.opacity_reset_interval == 0:
-                self.renderer.gaussians.reset_opacity()
+        #     if self.step % self.opt.opacity_reset_interval == 0:
+        #         self.renderer.gaussians.reset_opacity()
 
         ender.record()
         torch.cuda.synchronize()

@@ -205,7 +205,7 @@ class StableDiffusion(nn.Module):
 
             noise_pred = self.unet(
                 latent_model_input, tt, encoder_hidden_states=embeddings
-            ).sample
+            )
 
             # perform guidance (high scale from paper!)
             noise_pred_cond, noise_pred_uncond = noise_pred.chunk(2)
@@ -260,6 +260,12 @@ class StableDiffusion(nn.Module):
             # add noise
             # noise = torch.randn_like(latents)
             noise = latent_after_drag
+
+            # print("sds_latent:", latents.shape)
+            # print("noise:", noise.shape)
+
+            noise = F.interpolate(noise, size=(64, 64), mode='bilinear', align_corners=False)
+
             latents_noisy = self.scheduler.add_noise(latents, noise, t)
             # pred noise
             latent_model_input = torch.cat([latents_noisy] * 2)
@@ -277,7 +283,7 @@ class StableDiffusion(nn.Module):
 
             noise_pred = self.unet(
                 latent_model_input, tt, encoder_hidden_states=embeddings
-            ).sample
+            )
 
             # perform guidance (high scale from paper!)
             noise_pred_cond, noise_pred_uncond = noise_pred.chunk(2)
