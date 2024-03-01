@@ -22,7 +22,7 @@ from PIL import Image
 from diffusers import StableDiffusionPipeline, DDIMScheduler
 from guidance.sd_utils import StableDiffusion
 
-from drag import drag_step, override_forward
+from drag import drag_step, override_forward, drag_step_without_batch
 import copy
 import json
 from einops import rearrange
@@ -466,10 +466,11 @@ class GUI:
             x_prev_0,_ = self.guidance_sd.step(unet_output, t, init_code)
             # init_code_orig = copy.deepcopy(init_code)
 
-        # prepare optimizable init_code
+
         init_code.requires_grad_(True)
         init_code = init_code.to(torch.float32)
         optimizer = torch.optim.Adam([init_code.detach()], lr=self.opt.drag_diffusion_lr)
+
 
         # prepare for point tracking and background regularization
         handle_points_init = copy.deepcopy(start_points)
@@ -483,26 +484,32 @@ class GUI:
         for _ in range(self.dragging_steps):
             
             loss = 0
-            latents_after_editing = drag_step(
-                self.guidance_sd,
-                latents_before_editing,
-                text_embeddings = self.pos_embeds,
-                t = t,
-                handle_points = start_points,
-                handle_points_init = handle_points_init,
-                target_points = end_points,
-                mask = None,
-                step_idx = i,
-                F0 = F0,
-                using_mask = False,
-                x_prev_0 = x_prev_0,
-                interp_mask = None,
-                scaler = scaler,
-                optimizer = optimizer,
-                args = self.opt)
+            
+            latents_after_editing = []
 
             # one step motion supervision & point tracking
             for i in range(self.opt.batch_size):
+                
+                print(init_code[i].shape)
+                latent_after_editing = drag_step_without_batch(
+                        self.guidance_sd,
+                        init_code[i],
+                        text_embeddings = self.pos_embeds,
+                        t = t,
+                        handle_points = start_points,
+                        handle_points_init = handle_points_init,
+                        target_points = end_points,
+                        mask = None,
+                        step_idx = i,
+                        F0 = F0,
+                        using_mask = False,
+                        x_prev_0 = x_prev_0,
+                        interp_mask = None,
+                        scaler = scaler,
+                        optimizer=optimizer,
+                        args = self.opt)
+
+                latents_after_editing.append(latent_after_editing)
 
                 # *** loss calculation: add latent after editing
                 loss = loss + self.opt.lambda_sd * self.guidance_sd.draggs_train_step(latents_after_editing[i], image[i], step_ratio=step_ratio if self.opt.anneal_timestep else None)

@@ -82,10 +82,11 @@ def drag_step(model,
         x_prev_0,
         interp_mask,
         scaler,
+        optimizer,
         args):
+
     
-    
-    optimizer = torch.optim.Adam([init_code.detach()], lr=args.drag_diffusion_lr)
+
     with torch.autocast(device_type='cuda', dtype=torch.float16):
         unet_output, F1 = model.forward_unet_features(init_code, t, encoder_hidden_states=text_embeddings,
             layer_idx=args.unet_feature_idx, interp_res_h=args.sup_res_h, interp_res_w=args.sup_res_w)
@@ -123,8 +124,8 @@ def drag_step(model,
                 f1_patch.append(ans.reshape((-1)))
             f0_patch = torch.cat(f0_patch, dim=0)
             f1_patch = torch.cat(f1_patch, dim=0)
-            #f0_patch = F1[:,:,r1:r2, c1:c2].detach()
-            #f1_patch = interpolate_feature_patch(F1,r1+di[0],r2+di[0],c1+di[1],c2+di[1])
+            # f0_patch = F1[:,:,r1:r2, c1:c2].detach()
+            # f1_patch = interpolate_feature_patch(F1,r1+di[0],r2+di[0],c1+di[1],c2+di[1])
 
             # original code, without boundary protection
             # f0_patch = F1[:,:,int(pi[0])-args.r_m:int(pi[0])+args.r_m+1, int(pi[1])-args.r_m:int(pi[1])+args.r_m+1].detach()
@@ -141,6 +142,71 @@ def drag_step(model,
     scaler.step(optimizer)
     scaler.update()
     optimizer.zero_grad()
+
+
+def drag_step_without_batch(model,
+        init_code,
+        text_embeddings,
+        t,
+        handle_points,
+        handle_points_init,
+        target_points,
+        mask,
+        step_idx,
+        F0,
+        using_mask,
+        x_prev_0,
+        interp_mask,
+        scaler,
+        optimizer,
+        args):
+
+        with torch.autocast(device_type='cuda', dtype=torch.float16):
+            unet_output, F1 = model.forward_unet_features(init_code, t, encoder_hidden_states=text_embeddings,
+                layer_idx=args.unet_feature_idx, interp_res_h=args.sup_res_h, interp_res_w=args.sup_res_w)
+            x_prev_updated,_ = model.step(unet_output, t, init_code)
+
+            # do point tracking to update handle points before computing motion supervision loss
+            if step_idx != 0:
+                handle_points = point_tracking(F0, F1, handle_points, handle_points_init, args)
+                print('new handle points', handle_points)
+
+            # break if all handle points have reached the targets
+            # if check_handle_reach_target(handle_points, target_points):
+            #     break
+
+            loss = 0.0
+            _, _, max_r, max_c = F0.shape
+            for i in range(len(handle_points)):
+                pi, ti = handle_points[i], target_points[i]
+                # skip if the distance between target and source is less than 1
+                if (ti - pi).norm() < 2.:
+                    continue
+
+                di = (ti - pi) / (ti - pi).norm()
+
+                # motion supervision
+                # with boundary protection
+                r1, r2 = max(0,int(pi[0])-args.r_m), min(max_r,int(pi[0])+args.r_m+1)
+                c1, c2 = max(0,int(pi[1])-args.r_m), min(max_c,int(pi[1])+args.r_m+1)
+                f0_patch = F1[:,:,r1:r2, c1:c2].detach()
+                f1_patch = interpolate_feature_patch(F1,r1+di[0],r2+di[0],c1+di[1],c2+di[1])
+
+                # original code, without boundary protection
+                # f0_patch = F1[:,:,int(pi[0])-args.r_m:int(pi[0])+args.r_m+1, int(pi[1])-args.r_m:int(pi[1])+args.r_m+1].detach()
+                # f1_patch = interpolate_feature_patch(F1, pi[0] + di[0], pi[1] + di[1], args.r_m)
+                loss += ((2*args.r_m+1)**2)*F.l1_loss(f0_patch, f1_patch)
+
+            # masked region must stay unchanged
+            if using_mask:
+                loss += args.lam * ((x_prev_updated-x_prev_0)*(1.0-interp_mask)).abs().sum()
+            # loss += args.lam * ((init_code_orig-init_code)*(1.0-interp_mask)).abs().sum()
+            print('loss total=%f'%(loss.item()))
+
+        scaler.scale(loss).backward(retain_graph=True)
+        scaler.step(optimizer)
+        scaler.update()
+        optimizer.zero_grad()
 
 # override unet forward
 # The only difference from diffusers:
