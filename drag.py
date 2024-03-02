@@ -81,11 +81,10 @@ def drag_step(model,
         using_mask,
         x_prev_0,
         interp_mask,
-        scaler,
+        # scaler,
         optimizer,
         args):
 
-    
 
     with torch.autocast(device_type='cuda', dtype=torch.float16):
         unet_output, F1 = model.forward_unet_features(init_code, t, encoder_hidden_states=text_embeddings,
@@ -95,7 +94,7 @@ def drag_step(model,
         # do point tracking to update handle points before computing motion supervision loss
         if step_idx != 0:
             handle_points = point_tracking(F0, F1, handle_points, handle_points_init, args)
-            # print('new handle points', handle_points)
+            print('new handle points', handle_points)
 
         # break if all handle points have reached the targets
         if check_handle_reach_target(handle_points, target_points):
@@ -138,10 +137,17 @@ def drag_step(model,
             # loss += args.lam * ((init_code_orig-init_code)*(1.0-interp_mask)).abs().sum()
             print('loss total=%f'%(loss.item()))
 
-    scaler.scale(loss).backward(retain_graph=True)
-    scaler.step(optimizer)
-    scaler.update()
-    optimizer.zero_grad()
+    # scaler.scale(loss).backward(retain_graph=True)
+    # scaler.step(optimizer)
+    # scaler.update()
+        
+    loss.backward()
+    optimizer.step()
+    optimizer.zero_grad()    
+
+    print("init_code:", init_code[0][0])
+    print("handle_points:", handle_points)
+    return init_code, handle_points
 
 
 def drag_step_without_batch(model,

@@ -205,7 +205,7 @@ class StableDiffusion(nn.Module):
 
             noise_pred = self.unet(
                 latent_model_input, tt, encoder_hidden_states=embeddings
-            ).sample
+            )
 
             # perform guidance (high scale from paper!)
             noise_pred_cond, noise_pred_uncond = noise_pred.chunk(2)
@@ -260,6 +260,12 @@ class StableDiffusion(nn.Module):
             # add noise
             # noise = torch.randn_like(latents)
             noise = latent_after_drag
+
+            # print("sds_latent:", latents.shape)
+            # print("noise:", noise.shape)
+
+            noise = F.interpolate(noise, size=(64, 64), mode='bilinear', align_corners=False)
+
             latents_noisy = self.scheduler.add_noise(latents, noise, t)
             # pred noise
             latent_model_input = torch.cat([latents_noisy] * 2)
@@ -277,7 +283,7 @@ class StableDiffusion(nn.Module):
 
             noise_pred = self.unet(
                 latent_model_input, tt, encoder_hidden_states=embeddings
-            ).sample
+            )
 
             # perform guidance (high scale from paper!)
             noise_pred_cond, noise_pred_uncond = noise_pred.chunk(2)
@@ -551,7 +557,7 @@ class StableDiffusion(nn.Module):
             unconditional_embeddings = self.text_encoder(unconditional_input.input_ids.to(DEVICE))[0]
             text_embeddings = torch.cat([unconditional_embeddings, text_embeddings], dim=0)
 
-        print("latents shape: ", latents.shape)
+        # print("latents shape: ", latents.shape)
         # interative sampling
         self.scheduler.set_timesteps(num_inference_steps)
         print("Valid timesteps: ", reversed(self.scheduler.timesteps))
@@ -568,9 +574,9 @@ class StableDiffusion(nn.Module):
                 model_inputs = latents
 
             # predict the noise
-            print(model_inputs.shape)
-            print(t.shape)
-            print(text_embeddings.shape)
+            # print(model_inputs.shape)
+            # print(t.shape)
+            # print(text_embeddings.shape)
             noise_pred = self.unet(model_inputs, t, encoder_hidden_states=text_embeddings).sample
             if guidance_scale > 1.:
                 noise_pred_uncon, noise_pred_con = noise_pred.chunk(2, dim=0)

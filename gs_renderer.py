@@ -732,11 +732,6 @@ class  MiniCam:
         self.znear = znear
         self.zfar = zfar
 
-        print("FoVy", self.FoVy.dtype)
-        print("FoVx", self.FoVx.dtype)
-
-
-
         w2c = np.linalg.inv(c2w)
 
         # rectify...

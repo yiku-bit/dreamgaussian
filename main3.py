@@ -181,7 +181,7 @@ class GUI:
 
         # prepare text_embeddings
         self.pos_embeds = self.guidance_sd.encode_text(self.prompt)  # [1, 77, 768]
-        # self.guidance_sd.get_text_embeds([self.prompt], [self.negative_prompt])
+        self.guidance_sd.get_text_embeds([self.prompt], [self.negative_prompt])
 
     def get_2d_mask(self, mask_dir):
         source_images, imgname2idx = load_and_preprocess_images(args.folder_path, device="cuda")
@@ -216,6 +216,9 @@ class GUI:
         return mask
 
     def train_step(self):
+
+        torch.autograd.set_detect_anomaly(True)
+
         starter = torch.cuda.Event(enable_timing=True)
         ender = torch.cuda.Event(enable_timing=True)
         starter.record()
@@ -365,24 +368,11 @@ class GUI:
         for i in range(self.opt.batch_size):
             # set batch_size = 4
 
-            # render i/4 view
-            # ver = 0
-            # hor = start_hor # -180, -90, 0, 90
-            # ver = start_ver
-            # hor = 0
-            # hor = np.random.randint(-180, 180)
-            # start_hor += 90
-            # start_ver += 90
             radius = 0
 
-            # vers.append(ver)
-            # hors.append(hor)
             radii.append(radius)
 
-
-
             # pose = orbit_camera(self.opt.elevation + vers[i], hors[i], self.opt.radius + radius)
-
 
             poses = torch.tensor(poses, dtype=torch.float32)
             cur_cam = MiniCam(poses[i], render_resolution, render_resolution, self.cam.fovy, self.cam.fovx, self.cam.near, self.cam.far)
@@ -395,17 +385,18 @@ class GUI:
             images.append(image)
 
             # ***images visualize
-            image_np = image.squeeze(0).permute(1, 2, 0).cpu().detach().numpy()
-            image_np = (image_np * 255).astype('uint8')
-            image_pil = Image.fromarray(image_np)
-            image_pil.save(f"rendered_images/visualized_image_before_DDIMinversion_{i}.png")
+            # image_np = image.squeeze(0).permute(1, 2, 0).cpu().detach().numpy()
+            # image_np = (image_np * 255).astype('uint8')
+            # image_pil = Image.fromarray(image_np)
+            # image_pil.save(f"rendered_images/visualized_image_before_DDIMinversion_{i}.png")
             
-            
+        images = torch.cat(images, dim=0)    
+
+
         # latent_before_editing = DDIM_inversion(source_images=image,
         #                                    text_embeddings=self.guidance_sd.get_text_embeds)
         inversion_strength = 0.7
         n_actual_inference_step = round(inversion_strength * self.opt.n_inference_step)
-        images = torch.cat(images, dim=0)
         print("Start DDIM inversion...")
         latents_before_editing = self.guidance_sd.invert(images,
                                                     prompt=self.prompt,
@@ -414,17 +405,17 @@ class GUI:
                                                     num_inference_steps=self.opt.n_inference_step,
                                                     num_actual_inference_steps=n_actual_inference_step)
         print("invert code shape:", latents_before_editing.shape)
+  
         
         init_code = latents_before_editing
-        init_code_orig = deepcopy(init_code)
-        double_pos_embeds = self.pos_embeds.repeat(2, 1, 1)
-        gen_image = self.guidance_sd.sampling(prompt=self.prompt,
-                                        batch_size=self.opt.batch_size,
-                                        text_embeddings=double_pos_embeds,
-                                        latents=torch.cat([init_code_orig, init_code_orig], dim=0),
-                                        guidance_scale=self.opt.guidance_scale,
-                                        num_inference_steps=self.opt.n_inference_step,
-                                        num_actual_inference_steps=n_actual_inference_step)
+        # double_pos_embeds = self.pos_embeds.repeat(2, 1, 1)
+        # gen_image = self.guidance_sd.sampling(prompt=self.prompt,
+        #                                 batch_size=self.opt.batch_size,
+        #                                 text_embeddings=double_pos_embeds,
+        #                                 latents=torch.cat([init_code, init_code], dim=0),
+        #                                 guidance_scale=self.opt.guidance_scale,
+        #                                 num_inference_steps=self.opt.n_inference_step,
+        #                                 num_actual_inference_steps=n_actual_inference_step)
 
         # ***test sampling
         # test_prompt = "An apple."
@@ -433,17 +424,16 @@ class GUI:
         #                                       guidance_scale=self.opt.guidance_scale,
         #                                       text_embeddings=test_text_embeds)
         
-        print("gen_image:", gen_image.shape)
+        # print("gen_image:", gen_image.shape)
 
         # ***images visualize
-        for i in range(8):
-            image_np = gen_image[i].squeeze(0).permute(1, 2, 0).cpu().detach().numpy()
-            image_np = (image_np * 255).astype('uint8')
-            image_pil = Image.fromarray(image_np)
-            image_pil.save(f"rendered_images/sampling_results_{i}.png")
+        # for i in range(8):
+        #     image_np = gen_image[i].squeeze(0).permute(1, 2, 0).cpu().detach().numpy()
+        #     image_np = (image_np * 255).astype('uint8')
+        #     image_pil = Image.fromarray(image_np)
+        #     image_pil.save(f"rendered_images/sampling_results_{i}.png")
 
-        # sys.exit()
-        poses = torch.from_numpy(np.stack(poses, axis=0)).to(self.device)        
+        # sys.exit()      
         self.guidance_sd.unet.forward = override_forward(self.guidance_sd.unet)
 
 
@@ -477,53 +467,72 @@ class GUI:
         # print("input mask shape:", mask.shape)
         # interp_mask = F.interpolate(mask, (init_code.shape[2],init_code.shape[3]), mode='nearest')
         # using_mask = interp_mask.sum() != 0.0
+        
 
         # prepare amp scaler for mixed-precision training
-        scaler = torch.cuda.amp.GradScaler()
-        for _ in range(self.dragging_steps):
+        # scaler = torch.cuda.amp.GradScaler()
+        for i in range(self.dragging_steps):
             
-            loss = 0
-            latents_after_editing = drag_step(
-                self.guidance_sd,
-                latents_before_editing,
-                text_embeddings = self.pos_embeds,
-                t = t,
-                handle_points = start_points,
-                handle_points_init = handle_points_init,
-                target_points = end_points,
-                mask = None,
-                step_idx = i,
-                F0 = F0,
-                using_mask = False,
-                x_prev_0 = x_prev_0,
+            latents_after_editing, new_handle_points = drag_step(
+                model=self.guidance_sd,
+                init_code=latents_before_editing,
+                text_embeddings=self.pos_embeds,
+                t=t,
+                handle_points=start_points,
+                handle_points_init=handle_points_init,
+                target_points=end_points,
+                mask=None,
+                step_idx=i,
+                F0=F0,
+                using_mask=False,
+                x_prev_0=x_prev_0,
                 interp_mask = None,
-                scaler = scaler,
+                # scaler = scaler,
                 optimizer = optimizer,
                 args = self.opt)
+            
+            latents_before_editing = latents_after_editing
+            start_points = new_handle_points
 
+            loss = 0.0
             # one step motion supervision & point tracking
-            for i in range(self.opt.batch_size):
+            for j in range(self.opt.batch_size):
 
                 # *** loss calculation: add latent after editing
-                loss = loss + self.opt.lambda_sd * self.guidance_sd.draggs_train_step(latents_after_editing[i], image[i], step_ratio=step_ratio if self.opt.anneal_timestep else None)
-                
-            print(loss)
+                # latent_for_sds = latents_after_editing[i].unsqueeze(0)
+                image_for_sds = images[j].unsqueeze(0)
+                # loss = loss + self.opt.lambda_sd * self.guidance_sd.draggs_train_step(latent_for_sds, image_for_sds, step_ratio=step_ratio if self.opt.anneal_timestep else None)
+                loss = loss + self.opt.lambda_sd * self.guidance_sd.train_step(image_for_sds, step_ratio=step_ratio if self.opt.anneal_timestep else None)
 
+            print("sds_loss=", loss.item())  
+
+            self.optimizer.zero_grad()    
             loss.backward()
             self.optimizer.step()
-            self.optimizer.zero_grad()
+
+            images = []
+            for j in range(self.opt.batch_size):
+                # set batch_size = 4
+                out = self.renderer.render(cur_cam, bg_color=bg_color)
+                image = out["image"].unsqueeze(0) # [1, 3, H, W] in [0, 1] normalized
+                images.append(image)
+                
+            images = torch.cat(images, dim=0) 
+            
+
+
 
         # densify and prune
-        if self.step >= self.opt.density_start_iter and self.step <= self.opt.density_end_iter:
-            viewspace_point_tensor, visibility_filter, radii = out["viewspace_points"], out["visibility_filter"], out["radii"]
-            self.renderer.gaussians.max_radii2D[visibility_filter] = torch.max(self.renderer.gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
-            self.renderer.gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
+        # if self.step >= self.opt.density_start_iter and self.step <= self.opt.density_end_iter:
+        #     viewspace_point_tensor, visibility_filter, radii = out["viewspace_points"], out["visibility_filter"], out["radii"]
+        #     self.renderer.gaussians.max_radii2D[visibility_filter] = torch.max(self.renderer.gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
+        #     self.renderer.gaussians.add_densification_stats(viewspace_point_tensor, visibility_filter)
 
-            if self.step % self.opt.densification_interval == 0:
-                self.renderer.gaussians.densify_and_prune(self.opt.densify_grad_threshold, min_opacity=0.01, extent=4, max_screen_size=1)
+        #     if self.step % self.opt.densification_interval == 0:
+        #         self.renderer.gaussians.densify_and_prune(self.opt.densify_grad_threshold, min_opacity=0.01, extent=4, max_screen_size=1)
             
-            if self.step % self.opt.opacity_reset_interval == 0:
-                self.renderer.gaussians.reset_opacity()
+        #     if self.step % self.opt.opacity_reset_interval == 0:
+        #         self.renderer.gaussians.reset_opacity()
 
         ender.record()
         torch.cuda.synchronize()
