@@ -230,9 +230,9 @@ class StableDiffusion(nn.Module):
             pred_rgb,step_ratio=None,
             guidance_scale=100,
             as_latent=False,
-            vers=None, hors=None, 
+            vers=None, 
+            hors=None,
     ):
-        
         batch_size = 1
         pred_rgb = pred_rgb.to(self.dtype)
 

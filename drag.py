@@ -36,6 +36,30 @@ def point_tracking(F0,
                 handle_points[j,i,1] = c1[j] + col
         return handle_points
     
+def point_tracking_without_batch(F0,
+                   F1,
+                   handle_points,
+                   handle_points_init,
+                   args):
+    with torch.no_grad():
+        _, _, max_r, max_c = F0.shape
+        for i in range(len(handle_points)):
+            pi0, pi = handle_points_init[i], handle_points[i]
+            f0 = F0[:, :, int(pi0[0]), int(pi0[1])]
+
+            r1, r2 = max(0,int(pi[0])-args.r_p), min(max_r,int(pi[0])+args.r_p+1)
+            c1, c2 = max(0,int(pi[1])-args.r_p), min(max_c,int(pi[1])+args.r_p+1)
+            F1_neighbor = F1[:, :, r1:r2, c1:c2]
+            all_dist = (f0.unsqueeze(dim=-1).unsqueeze(dim=-1) - F1_neighbor).abs().sum(dim=1)
+            all_dist = all_dist.squeeze(dim=0)
+            # print(all_dist)
+            row, col = divmod(all_dist.argmin().item(), all_dist.shape[-1])
+            # handle_points[i][0] = pi[0] - args.r_p + row
+            # handle_points[i][1] = pi[1] - args.r_p + col
+            handle_points[i][0] = r1 + row
+            handle_points[i][1] = c1 + col
+        return handle_points
+    
 def check_handle_reach_target(handle_points,
                               target_points):
     # dist = (torch.cat(handle_points,dim=0) - torch.cat(target_points,dim=0)).norm(dim=-1)
@@ -141,7 +165,7 @@ def drag_step(model,
     # scaler.step(optimizer)
     # scaler.update()
         
-    loss.backward()
+    loss.backward(retain_graph=True)
     optimizer.step()
     optimizer.zero_grad()    
 
@@ -165,6 +189,7 @@ def drag_step_without_batch(model,
         interp_mask,
         scaler,
         optimizer,
+        cur_batch,
         args):
 
         # with torch.autocast(device_type='cuda', dtype=torch.float16):
@@ -174,8 +199,8 @@ def drag_step_without_batch(model,
 
         # do point tracking to update handle points before computing motion supervision loss
         if step_idx != 0:
-            handle_points = point_tracking(F0, F1, handle_points, handle_points_init, args)
-            print('new handle points', handle_points)
+            handle_points = point_tracking_without_batch(F0, F1, handle_points, handle_points_init, args)
+            # print('new handle points', handle_points)
         else:
             print('handle_points:', handle_points)
         # break if all handle points have reached the targets
@@ -208,7 +233,7 @@ def drag_step_without_batch(model,
         if using_mask:
             loss += args.lam * ((x_prev_updated-x_prev_0)*(1.0-interp_mask)).abs().sum()
         # loss += args.lam * ((init_code_orig-init_code)*(1.0-interp_mask)).abs().sum()
-        print('loss total=%f'%(loss.item()))
+        print('batch=', cur_batch, '  loss total=%f'%(loss.item()))
 
         # scaler.scale(loss).backward(retain_graph=True)
         # scaler.step(optimizer)
@@ -216,6 +241,8 @@ def drag_step_without_batch(model,
         loss.backward(retain_graph=True)
         optimizer.step()
         optimizer.zero_grad()
+
+        return init_code, handle_points
 
 # override unet forward
 # The only difference from diffusers:
@@ -313,9 +340,9 @@ def override_forward(self):
 
         # 2. pre-process
         sample = self.conv_in(sample)
-        print("sample:",sample.shape)
-        print(emb.shape)
-        print(encoder_hidden_states.shape)
+        # print("sample:",sample.shape)
+        # print(emb.shape)
+        # print(encoder_hidden_states.shape)
         # 3. down 
         down_block_res_samples = (sample,)
         for downsample_block in self.down_blocks:

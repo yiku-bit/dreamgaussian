@@ -237,9 +237,9 @@ class GUI:
         poses = []  
         vers, hors, radii = [], [], []
         start_points = torch.tensor([[[390, 154]],[[227,127]],[[360, 123]],[[560, 110]]])
-        start_points = (start_points / 800) * 128
+        start_points = (start_points * 128 // 800).float()
         end_points = torch.tensor([[[390, 84]],[[227, 61]],[[360, 62]],[[560, 34]]])
-        end_points = (end_points / 800) * 128
+        end_points = (end_points * 128 // 800).float() 
         latents_before_editing = []
         masks = []
         # avoid too large elevation (> 80 or < -80), and make sure it always cover [min_ver, max_ver]
@@ -407,7 +407,6 @@ class GUI:
         print("invert code shape:", latents_before_editing.shape)
   
         
-        init_code = latents_before_editing
         # double_pos_embeds = self.pos_embeds.repeat(2, 1, 1)
         # gen_image = self.guidance_sd.sampling(prompt=self.prompt,
         #                                 batch_size=self.opt.batch_size,
@@ -499,10 +498,10 @@ class GUI:
             for j in range(self.opt.batch_size):
 
                 # *** loss calculation: add latent after editing
-                # latent_for_sds = latents_after_editing[i].unsqueeze(0)
+                latent_for_sds = latents_after_editing[j].unsqueeze(0)
                 image_for_sds = images[j].unsqueeze(0)
-                # loss = loss + self.opt.lambda_sd * self.guidance_sd.draggs_train_step(latent_for_sds, image_for_sds, step_ratio=step_ratio if self.opt.anneal_timestep else None)
-                loss = loss + self.opt.lambda_sd * self.guidance_sd.train_step(image_for_sds, step_ratio=step_ratio if self.opt.anneal_timestep else None)
+                loss = loss + self.opt.lambda_sd * self.guidance_sd.draggs_train_step(latent_for_sds, image_for_sds, step_ratio=step_ratio if self.opt.anneal_timestep else None)
+                # loss = loss + self.opt.lambda_sd * self.guidance_sd.train_step(image_for_sds, step_ratio=step_ratio if self.opt.anneal_timestep else None)
 
             print("sds_loss=", loss.item())  
 
