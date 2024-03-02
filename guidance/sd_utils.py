@@ -557,7 +557,7 @@ class StableDiffusion(nn.Module):
             unconditional_embeddings = self.text_encoder(unconditional_input.input_ids.to(DEVICE))[0]
             text_embeddings = torch.cat([unconditional_embeddings, text_embeddings], dim=0)
 
-        print("latents shape: ", latents.shape)
+        # print("latents shape: ", latents.shape)
         # interative sampling
         self.scheduler.set_timesteps(num_inference_steps)
         print("Valid timesteps: ", reversed(self.scheduler.timesteps))

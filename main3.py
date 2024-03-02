@@ -368,24 +368,11 @@ class GUI:
         for i in range(self.opt.batch_size):
             # set batch_size = 4
 
-            # render i/4 view
-            # ver = 0
-            # hor = start_hor # -180, -90, 0, 90
-            # ver = start_ver
-            # hor = 0
-            # hor = np.random.randint(-180, 180)
-            # start_hor += 90
-            # start_ver += 90
             radius = 0
 
-            # vers.append(ver)
-            # hors.append(hor)
             radii.append(radius)
 
-
-
             # pose = orbit_camera(self.opt.elevation + vers[i], hors[i], self.opt.radius + radius)
-
 
             poses = torch.tensor(poses, dtype=torch.float32)
             cur_cam = MiniCam(poses[i], render_resolution, render_resolution, self.cam.fovy, self.cam.fovx, self.cam.near, self.cam.far)
@@ -398,17 +385,18 @@ class GUI:
             images.append(image)
 
             # ***images visualize
-            image_np = image.squeeze(0).permute(1, 2, 0).cpu().detach().numpy()
-            image_np = (image_np * 255).astype('uint8')
-            image_pil = Image.fromarray(image_np)
-            image_pil.save(f"rendered_images/visualized_image_before_DDIMinversion_{i}.png")
+            # image_np = image.squeeze(0).permute(1, 2, 0).cpu().detach().numpy()
+            # image_np = (image_np * 255).astype('uint8')
+            # image_pil = Image.fromarray(image_np)
+            # image_pil.save(f"rendered_images/visualized_image_before_DDIMinversion_{i}.png")
             
-            
+        images = torch.cat(images, dim=0)    
+
+
         # latent_before_editing = DDIM_inversion(source_images=image,
         #                                    text_embeddings=self.guidance_sd.get_text_embeds)
         inversion_strength = 0.7
         n_actual_inference_step = round(inversion_strength * self.opt.n_inference_step)
-        images = torch.cat(images, dim=0)
         print("Start DDIM inversion...")
         latents_before_editing = self.guidance_sd.invert(images,
                                                     prompt=self.prompt,
@@ -417,6 +405,7 @@ class GUI:
                                                     num_inference_steps=self.opt.n_inference_step,
                                                     num_actual_inference_steps=n_actual_inference_step)
         print("invert code shape:", latents_before_editing.shape)
+  
         
         init_code = latents_before_editing
         double_pos_embeds = self.pos_embeds.repeat(2, 1, 1)
@@ -438,14 +427,13 @@ class GUI:
         print("gen_image:", gen_image.shape)
 
         # ***images visualize
-        for i in range(8):
-            image_np = gen_image[i].squeeze(0).permute(1, 2, 0).cpu().detach().numpy()
-            image_np = (image_np * 255).astype('uint8')
-            image_pil = Image.fromarray(image_np)
-            image_pil.save(f"rendered_images/sampling_results_{i}.png")
+        # for i in range(8):
+        #     image_np = gen_image[i].squeeze(0).permute(1, 2, 0).cpu().detach().numpy()
+        #     image_np = (image_np * 255).astype('uint8')
+        #     image_pil = Image.fromarray(image_np)
+        #     image_pil.save(f"rendered_images/sampling_results_{i}.png")
 
-        # sys.exit()
-        poses = torch.from_numpy(np.stack(poses, axis=0)).to(self.device)        
+        # sys.exit()      
         self.guidance_sd.unet.forward = override_forward(self.guidance_sd.unet)
 
 
@@ -479,12 +467,12 @@ class GUI:
         # print("input mask shape:", mask.shape)
         # interp_mask = F.interpolate(mask, (init_code.shape[2],init_code.shape[3]), mode='nearest')
         # using_mask = interp_mask.sum() != 0.0
+        
 
         # prepare amp scaler for mixed-precision training
         # scaler = torch.cuda.amp.GradScaler()
-        for _ in range(self.dragging_steps):
+        for j in range(self.dragging_steps):
             
-            loss = 0
             latents_after_editing = drag_step(
                 self.guidance_sd,
                 latents_before_editing,
@@ -494,7 +482,7 @@ class GUI:
                 handle_points_init = handle_points_init,
                 target_points = end_points,
                 mask = None,
-                step_idx = i,
+                step_idx = j,
                 F0 = F0,
                 using_mask = False,
                 x_prev_0 = x_prev_0,
@@ -502,21 +490,36 @@ class GUI:
                 # scaler = scaler,
                 optimizer = optimizer,
                 args = self.opt)
+            
+            latents_before_editing = latents_after_editing
 
+            loss = 0
             # one step motion supervision & point tracking
             for i in range(self.opt.batch_size):
 
                 # *** loss calculation: add latent after editing
-                latent_for_sds = latents_after_editing[i].unsqueeze(0)
+                # latent_for_sds = latents_after_editing[i].unsqueeze(0)
                 image_for_sds = images[i].unsqueeze(0)
                 # loss = loss + self.opt.lambda_sd * self.guidance_sd.draggs_train_step(latent_for_sds, image_for_sds, step_ratio=step_ratio if self.opt.anneal_timestep else None)
                 loss = loss + self.opt.lambda_sd * self.guidance_sd.train_step(image_for_sds, step_ratio=step_ratio if self.opt.anneal_timestep else None)
 
-            print("sds_loss:", loss.item())
+            print("sds_loss=", loss.item())  
 
-            loss.backward(retain_graph=True)
+            self.optimizer.zero_grad()    
+            loss.backward()
             self.optimizer.step()
-            self.optimizer.zero_grad()
+
+            images = []
+            for i in range(self.opt.batch_size):
+                # set batch_size = 4
+                out = self.renderer.render(cur_cam, bg_color=bg_color)
+                image = out["image"].unsqueeze(0) # [1, 3, H, W] in [0, 1] normalized
+                images.append(image)
+                
+            images = torch.cat(images, dim=0) 
+            
+
+
 
         # densify and prune
         # if self.step >= self.opt.density_start_iter and self.step <= self.opt.density_end_iter:

@@ -2,7 +2,7 @@
 # input rgba image path (default to None, can be load in GUI too)
 input: 
 # input text prompt (default to None, can be input in GUI too)
-prompt:
+prompt: A chair.
 negative_prompt:
 # input mesh for stage 2 (auto-search from stage 1 output path if None)
 mesh:
