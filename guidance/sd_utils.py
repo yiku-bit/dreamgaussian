@@ -574,9 +574,9 @@ class StableDiffusion(nn.Module):
                 model_inputs = latents
 
             # predict the noise
-            print(model_inputs.shape)
-            print(t.shape)
-            print(text_embeddings.shape)
+            # print(model_inputs.shape)
+            # print(t.shape)
+            # print(text_embeddings.shape)
             noise_pred = self.unet(model_inputs, t, encoder_hidden_states=text_embeddings).sample
             if guidance_scale > 1.:
                 noise_pred_uncon, noise_pred_con = noise_pred.chunk(2, dim=0)

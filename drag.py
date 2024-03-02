@@ -94,7 +94,7 @@ def drag_step(model,
         # do point tracking to update handle points before computing motion supervision loss
         if step_idx != 0:
             handle_points = point_tracking(F0, F1, handle_points, handle_points_init, args)
-            # print('new handle points', handle_points)
+            print('new handle points', handle_points)
 
         # break if all handle points have reached the targets
         if check_handle_reach_target(handle_points, target_points):
@@ -141,11 +141,13 @@ def drag_step(model,
     # scaler.step(optimizer)
     # scaler.update()
         
-    loss.backward(retain_graph=True)
+    loss.backward()
     optimizer.step()
     optimizer.zero_grad()    
 
-    return init_code
+    print("init_code:", init_code[0][0])
+    print("handle_points:", handle_points)
+    return init_code, handle_points
 
 
 def drag_step_without_batch(model,

@@ -408,14 +408,14 @@ class GUI:
   
         
         init_code = latents_before_editing
-        double_pos_embeds = self.pos_embeds.repeat(2, 1, 1)
-        gen_image = self.guidance_sd.sampling(prompt=self.prompt,
-                                        batch_size=self.opt.batch_size,
-                                        text_embeddings=double_pos_embeds,
-                                        latents=torch.cat([init_code, init_code], dim=0),
-                                        guidance_scale=self.opt.guidance_scale,
-                                        num_inference_steps=self.opt.n_inference_step,
-                                        num_actual_inference_steps=n_actual_inference_step)
+        # double_pos_embeds = self.pos_embeds.repeat(2, 1, 1)
+        # gen_image = self.guidance_sd.sampling(prompt=self.prompt,
+        #                                 batch_size=self.opt.batch_size,
+        #                                 text_embeddings=double_pos_embeds,
+        #                                 latents=torch.cat([init_code, init_code], dim=0),
+        #                                 guidance_scale=self.opt.guidance_scale,
+        #                                 num_inference_steps=self.opt.n_inference_step,
+        #                                 num_actual_inference_steps=n_actual_inference_step)
 
         # ***test sampling
         # test_prompt = "An apple."
@@ -424,7 +424,7 @@ class GUI:
         #                                       guidance_scale=self.opt.guidance_scale,
         #                                       text_embeddings=test_text_embeds)
         
-        print("gen_image:", gen_image.shape)
+        # print("gen_image:", gen_image.shape)
 
         # ***images visualize
         # for i in range(8):
@@ -471,35 +471,36 @@ class GUI:
 
         # prepare amp scaler for mixed-precision training
         # scaler = torch.cuda.amp.GradScaler()
-        for j in range(self.dragging_steps):
+        for i in range(self.dragging_steps):
             
-            latents_after_editing = drag_step(
-                self.guidance_sd,
-                latents_before_editing,
-                text_embeddings = self.pos_embeds,
-                t = t,
-                handle_points = start_points,
-                handle_points_init = handle_points_init,
-                target_points = end_points,
-                mask = None,
-                step_idx = j,
-                F0 = F0,
-                using_mask = False,
-                x_prev_0 = x_prev_0,
+            latents_after_editing, new_handle_points = drag_step(
+                model=self.guidance_sd,
+                init_code=latents_before_editing,
+                text_embeddings=self.pos_embeds,
+                t=t,
+                handle_points=start_points,
+                handle_points_init=handle_points_init,
+                target_points=end_points,
+                mask=None,
+                step_idx=i,
+                F0=F0,
+                using_mask=False,
+                x_prev_0=x_prev_0,
                 interp_mask = None,
                 # scaler = scaler,
                 optimizer = optimizer,
                 args = self.opt)
             
             latents_before_editing = latents_after_editing
+            start_points = new_handle_points
 
-            loss = 0
+            loss = 0.0
             # one step motion supervision & point tracking
-            for i in range(self.opt.batch_size):
+            for j in range(self.opt.batch_size):
 
                 # *** loss calculation: add latent after editing
                 # latent_for_sds = latents_after_editing[i].unsqueeze(0)
-                image_for_sds = images[i].unsqueeze(0)
+                image_for_sds = images[j].unsqueeze(0)
                 # loss = loss + self.opt.lambda_sd * self.guidance_sd.draggs_train_step(latent_for_sds, image_for_sds, step_ratio=step_ratio if self.opt.anneal_timestep else None)
                 loss = loss + self.opt.lambda_sd * self.guidance_sd.train_step(image_for_sds, step_ratio=step_ratio if self.opt.anneal_timestep else None)
 
@@ -510,7 +511,7 @@ class GUI:
             self.optimizer.step()
 
             images = []
-            for i in range(self.opt.batch_size):
+            for j in range(self.opt.batch_size):
                 # set batch_size = 4
                 out = self.renderer.render(cur_cam, bg_color=bg_color)
                 image = out["image"].unsqueeze(0) # [1, 3, H, W] in [0, 1] normalized
