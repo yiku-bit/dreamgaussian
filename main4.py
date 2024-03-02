@@ -526,6 +526,8 @@ class GUI:
 
             # print("new_handle_point_batch:", new_handle_point_batch[0][0])
             # print("latents_after_editing:", latents_after_editing)
+            if new_handle_point_batch is None and latents_after_editing is None:
+                break
             start_points = new_handle_point_batch
             init_code = latents_after_editing
 

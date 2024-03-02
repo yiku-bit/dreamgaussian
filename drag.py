@@ -209,8 +209,8 @@ def drag_step_without_batch(model,
         else:
             print('handle_points:', handle_points)
         # break if all handle points have reached the targets
-        # if check_handle_reach_target(handle_points, target_points):
-        #     break
+        if check_handle_reach_target(handle_points, target_points):
+            return None, None
 
         loss = 0.0
         _, _, max_r, max_c = F0.shape
