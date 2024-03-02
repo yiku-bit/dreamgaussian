@@ -161,51 +161,54 @@ def drag_step_without_batch(model,
         optimizer,
         args):
 
-        with torch.autocast(device_type='cuda', dtype=torch.float16):
-            unet_output, F1 = model.forward_unet_features(init_code, t, encoder_hidden_states=text_embeddings,
-                layer_idx=args.unet_feature_idx, interp_res_h=args.sup_res_h, interp_res_w=args.sup_res_w)
-            x_prev_updated,_ = model.step(unet_output, t, init_code)
+        # with torch.autocast(device_type='cuda', dtype=torch.float16):
+        unet_output, F1 = model.forward_unet_features(init_code.unsqueeze(0), t, encoder_hidden_states=text_embeddings.unsqueeze(0),
+            layer_idx=args.unet_feature_idx, interp_res_h=args.sup_res_h, interp_res_w=args.sup_res_w)
+        x_prev_updated,_ = model.step(unet_output, t, init_code)
 
-            # do point tracking to update handle points before computing motion supervision loss
-            if step_idx != 0:
-                handle_points = point_tracking(F0, F1, handle_points, handle_points_init, args)
-                print('new handle points', handle_points)
+        # do point tracking to update handle points before computing motion supervision loss
+        if step_idx != 0:
+            handle_points = point_tracking(F0, F1, handle_points, handle_points_init, args)
+            print('new handle points', handle_points)
+        else:
+            print('handle_points:', handle_points)
+        # break if all handle points have reached the targets
+        # if check_handle_reach_target(handle_points, target_points):
+        #     break
 
-            # break if all handle points have reached the targets
-            # if check_handle_reach_target(handle_points, target_points):
-            #     break
+        loss = 0.0
+        _, _, max_r, max_c = F0.shape
+        for i in range(len(handle_points)):
+            pi, ti = handle_points[i], target_points[i]
+            # skip if the distance between target and source is less than 1
+            if (ti - pi).norm() < 2.:
+                continue
 
-            loss = 0.0
-            _, _, max_r, max_c = F0.shape
-            for i in range(len(handle_points)):
-                pi, ti = handle_points[i], target_points[i]
-                # skip if the distance between target and source is less than 1
-                if (ti - pi).norm() < 2.:
-                    continue
+            di = (ti - pi) / (ti - pi).norm()
 
-                di = (ti - pi) / (ti - pi).norm()
+            # motion supervision
+            # with boundary protection
+            r1, r2 = max(0,int(pi[0])-args.r_m), min(max_r,int(pi[0])+args.r_m+1)
+            c1, c2 = max(0,int(pi[1])-args.r_m), min(max_c,int(pi[1])+args.r_m+1)
+            f0_patch = F1[:,:,r1:r2, c1:c2].detach()
+            f1_patch = interpolate_feature_patch(F1,r1+di[0],r2+di[0],c1+di[1],c2+di[1])
 
-                # motion supervision
-                # with boundary protection
-                r1, r2 = max(0,int(pi[0])-args.r_m), min(max_r,int(pi[0])+args.r_m+1)
-                c1, c2 = max(0,int(pi[1])-args.r_m), min(max_c,int(pi[1])+args.r_m+1)
-                f0_patch = F1[:,:,r1:r2, c1:c2].detach()
-                f1_patch = interpolate_feature_patch(F1,r1+di[0],r2+di[0],c1+di[1],c2+di[1])
+            # original code, without boundary protection
+            # f0_patch = F1[:,:,int(pi[0])-args.r_m:int(pi[0])+args.r_m+1, int(pi[1])-args.r_m:int(pi[1])+args.r_m+1].detach()
+            # f1_patch = interpolate_feature_patch(F1, pi[0] + di[0], pi[1] + di[1], args.r_m)
+            loss += ((2*args.r_m+1)**2)*F.l1_loss(f0_patch, f1_patch)
 
-                # original code, without boundary protection
-                # f0_patch = F1[:,:,int(pi[0])-args.r_m:int(pi[0])+args.r_m+1, int(pi[1])-args.r_m:int(pi[1])+args.r_m+1].detach()
-                # f1_patch = interpolate_feature_patch(F1, pi[0] + di[0], pi[1] + di[1], args.r_m)
-                loss += ((2*args.r_m+1)**2)*F.l1_loss(f0_patch, f1_patch)
+        # masked region must stay unchanged
+        if using_mask:
+            loss += args.lam * ((x_prev_updated-x_prev_0)*(1.0-interp_mask)).abs().sum()
+        # loss += args.lam * ((init_code_orig-init_code)*(1.0-interp_mask)).abs().sum()
+        print('loss total=%f'%(loss.item()))
 
-            # masked region must stay unchanged
-            if using_mask:
-                loss += args.lam * ((x_prev_updated-x_prev_0)*(1.0-interp_mask)).abs().sum()
-            # loss += args.lam * ((init_code_orig-init_code)*(1.0-interp_mask)).abs().sum()
-            print('loss total=%f'%(loss.item()))
-
-        scaler.scale(loss).backward(retain_graph=True)
-        scaler.step(optimizer)
-        scaler.update()
+        # scaler.scale(loss).backward(retain_graph=True)
+        # scaler.step(optimizer)
+        # scaler.update()
+        loss.backward(retain_graph=True)
+        optimizer.step()
         optimizer.zero_grad()
 
 # override unet forward
@@ -304,7 +307,9 @@ def override_forward(self):
 
         # 2. pre-process
         sample = self.conv_in(sample)
-        
+        print("sample:",sample.shape)
+        print(emb.shape)
+        print(encoder_hidden_states.shape)
         # 3. down 
         down_block_res_samples = (sample,)
         for downsample_block in self.down_blocks:

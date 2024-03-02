@@ -466,7 +466,6 @@ class GUI:
             x_prev_0,_ = self.guidance_sd.step(unet_output, t, init_code)
             # init_code_orig = copy.deepcopy(init_code)
 
-
         init_code.requires_grad_(True)
         init_code = init_code.to(torch.float32)
         optimizer = torch.optim.Adam([init_code.detach()], lr=self.opt.drag_diffusion_lr)
@@ -493,12 +492,12 @@ class GUI:
                 print(init_code[i].shape)
                 latent_after_editing = drag_step_without_batch(
                         self.guidance_sd,
-                        init_code[i],
-                        text_embeddings = self.pos_embeds,
+                        init_code[i].half(),
+                        text_embeddings = self.pos_embeds[i],
                         t = t,
-                        handle_points = start_points,
-                        handle_points_init = handle_points_init,
-                        target_points = end_points,
+                        handle_points = start_points[i],
+                        handle_points_init = handle_points_init[i],
+                        target_points = end_points[i],
                         mask = None,
                         step_idx = i,
                         F0 = F0,
@@ -512,7 +511,7 @@ class GUI:
                 latents_after_editing.append(latent_after_editing)
 
                 # *** loss calculation: add latent after editing
-                loss = loss + self.opt.lambda_sd * self.guidance_sd.draggs_train_step(latents_after_editing[i], image[i], step_ratio=step_ratio if self.opt.anneal_timestep else None)
+                loss = loss + self.opt.lambda_sd * self.guidance_sd.draggs_train_step(latents_after_editing[i:i+1], image[i:i+1], step_ratio=step_ratio if self.opt.anneal_timestep else None)
                 
             print(loss)
 
