@@ -46,10 +46,15 @@ def point_tracking_without_batch(F0,
         for i in range(len(handle_points)):
             pi0, pi = handle_points_init[i], handle_points[i]
             f0 = F0[:, :, int(pi0[0]), int(pi0[1])]
+            print("f0:", f0)
 
             r1, r2 = max(0,int(pi[0])-args.r_p), min(max_r,int(pi[0])+args.r_p+1)
+            print("r1:", r1, "r2:", r2)
             c1, c2 = max(0,int(pi[1])-args.r_p), min(max_c,int(pi[1])+args.r_p+1)
+            print("c1:", c1, "c2:", c2)
             F1_neighbor = F1[:, :, r1:r2, c1:c2]
+
+            print("F1_neighbor:", F1_neighbor)
             all_dist = (f0.unsqueeze(dim=-1).unsqueeze(dim=-1) - F1_neighbor).abs().sum(dim=1)
             all_dist = all_dist.squeeze(dim=0)
             # print(all_dist)
